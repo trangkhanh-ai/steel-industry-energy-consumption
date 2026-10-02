@@ -26,3 +26,5 @@ Lần đầu `duy_2026-10-01` tạo đủ artifact nhưng lỗi in đường d�
 - QA FE-01–06 kiểm pipeline và CSV thật; dữ liệu sai/thiếu phải BLOCKER và mã thoát 1. Đây là kiểm tự động, không thay chữ ký nghiệm thu của Khánh.
 - Notebook 02 dùng model đã khóa của Duy; LightGBM cũ được giữ làm lịch sử, hai công tắc calibration/test mặc định False.
 - Chưa gắn policy của LightGBM vào HGB; cần nhóm duyệt protocol/model/policy trước tích hợp dashboard. Các đề xuất thay đổi nghiệp vụ vẫn chờ nhóm chốt.
+
+- Trong lúc tích hợp đã nhận commit GitHub mới `12eed4b`: giữ nguyên source nhóm và nối demo/monitoring với artifact Duy qua adapter, không đổi model hoặc tái tuning. Hai xung đột README/requirements được giải quyết có lưu README upstream tham chiếu.

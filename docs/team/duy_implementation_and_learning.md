@@ -2,7 +2,7 @@
 
 **Bản bàn giao:** `reports/steel/duy_2026-10-02/`, tái chạy ngày 02/10/2026. Đây là kết quả train/validation mới trên dữ liệu cũ. Kế hoạch A–Z vẫn ở `ke_hoach_nhom_3_nguoi.md`; cần Khánh/Huy kiểm chéo trước khi ký nghiệm thu.
 
-**Đọc trực quan từng bước:** [Notebook phần Duy](../../notebooks/03_duy_steel_data_and_models.ipynb), đã thực thi với hình và output. **Notion:** [code, kết quả và lộ trình học](https://app.notion.com/p/3ec7c27769028108ae9bcca9664ca756?pvs=204) · [ghi chú Khánh/Huy](https://app.notion.com/p/3ec7c277690281118c0ac50e96c2131a?pvs=204). Đã qua 34 kiểm thử dữ liệu/model/inference/QA/evaluation. Xem bản rà soát ngày 02/10 cho trạng thái xuất bản và kiểm môi trường.
+**Đọc trực quan từng bước:** [Notebook phần Duy](../../notebooks/03_duy_steel_data_and_models.ipynb), đã thực thi với hình và output. **Notion:** [code, kết quả và lộ trình học](https://app.notion.com/p/3ec7c27769028108ae9bcca9664ca756?pvs=204) · [ghi chú Khánh/Huy](https://app.notion.com/p/3ec7c277690281118c0ac50e96c2131a?pvs=204). 34 kiểm thử phần core đã qua; bộ tích hợp thêm demo/monitoring gồm 62 tests. Xem bản rà soát ngày 02/10 cho trạng thái xuất bản và kiểm môi trường.
 
 ## 1. Phần Duy và thứ tự đọc code
 

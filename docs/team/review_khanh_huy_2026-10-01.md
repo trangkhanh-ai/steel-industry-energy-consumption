@@ -97,3 +97,9 @@
 2. Duy bàn giao bản v2 HGB với15 feature, validation vàAPI prediction-only. Đây là ứng viên theo kế hoạch hiện hành; cần thống nhất với LightGBM trên cùng validation nếu nhóm muốn so thêm.
 3. Huy nhận đúngmodel + policy, nối adapter và kiểm toàn luồng. Duy kiểm runtime khi code được bàn giao.
 4. Khánh/Huy/Duy ghi nghiệm thu từng cổng, rồi mới cập nhật các tuyên bố hoàn tất trong tài liệu nhóm.
+
+## Cập nhật ngày 02/10/2026
+
+- Ghi chú trên là ảnh chụp đánh giá tại commit f0404c5. Commit mới 12eed4b đã bổ sung source demo/monitoring; trạng thái thiếu source H01 đã được giải quyết.
+- Duy đã vá QA, chuyển notebook evaluation sang artifact khóa, tích hợp demo vào run Duy. Xem `review_and_release_2026-10-02.md` và README cho trạng thái hiện tại.
+- Việc còn lại: Khánh chốt/chạy calibration/test/policy; Huy nghiệm thu demo và gắn policy, bổ sung drift/giá trị nghiệp vụ.

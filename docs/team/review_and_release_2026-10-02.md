@@ -2,7 +2,7 @@
 
 ## 1. Phạm vi và phiên bản
 
-- Nguồn tích hợp: GitHub `trangkhanh-ai/steel-industry-energy-consumption`, nền commit `f0404c5ab0d8a29136ace30071180cd32c19add3`.
+- Nguồn tích hợp: GitHub `trangkhanh-ai/steel-industry-energy-consumption`, nền commit `f0404c5ab0d8a29136ace30071180cd32c19add3`, sau đó tích hợp commit mới `12eed4b201b8a69e1c6fa3e870febafe0d085b07` của nhóm.
 - Không làm mất thay đổi local trước đó hoặc sửa CSV UCI. Bản bàn giao mới nằm riêng tại `reports/steel/duy_2026-10-02`.
 - Luồng hiện tại: **dự báo tổng kWh của giờ tới**, sau đó lớp cảnh báo do Khánh hiệu chỉnh. Kế hoạch nhóm và problem card giữ cùng mục tiêu.
 - Giữ nguyên 15 feature, lịch split và bốn cấu hình Ridge/HGB; kết quả tái chạy cùng MAE/RMSE của Duy ngày 01/10.
@@ -27,7 +27,7 @@
 
 ## 3. Minh bạch kết quả và lịch sử
 
-- 34 unittest đạt: preprocessing 10, Duy 16, QA 4, evaluation 4.
+- 34 unittest phần core đạt: preprocessing 10, Duy 16, QA 4, evaluation 4. Sau nhận source demo/monitoring mới: bộ đầy đủ gồm 62 tests, chạy với model Duy trong môi trường cài mới.
 - QA FE-01–06 đạt trên dữ liệu processed trước đây và processed của run mới; dữ liệu bị sửa trong kiểm thử phải thất bại.
 - Model chọn: HGB 31 lá; validation MAE **15,8828504916 kWh**, RMSE **32,0474942141 kWh**.
 - Baseline tốt nhất: last_hour; MAE **32,3237726008 kWh**; cải thiện MAE **50,86%** trên validation.
@@ -54,7 +54,7 @@
 
 ### Huy
 
-- Source dashboard/API Huy mô tả trong Notion chưa có trong cây GitHub được kiểm; cần bổ sung để review chạy thực tế.
+- Code dashboard/monitoring đã nhận từ commit `12eed4b`; Duy nối adapter `SteelForecaster` vào artifact Duy và đổi default demo/check/predict/replay. Huy cần nghiệm thu UI trên máy mình và tích hợp policy.
 - UI chỉ dùng model và policy cùng phiên bản. Khi chưa có policy, hiện rõ forecast-only; dữ liệu lỗi/thiếu lịch sử phải yêu cầu kiểm lại.
 - Tích hợp người duyệt, khuyến nghị kiểm tra, log quyết định; không tự dừng máy hoặc giảm tải.
 - Đo latency từ dữ liệu qua feature/model/policy tới UI; kiểm artifact lỗi, phiên cũ, 00:00, mất mốc, NaN/Inf và user feedback.
@@ -77,3 +77,22 @@ Lệnh chi tiết ở README. Kiểm bản clone/ZIP trên cùng máy là kiểm
 - [Lee — Industrial AI (2020)](https://doi.org/10.1007/978-981-15-2144-7): đối chiếu 3B và industrial context trong kế hoạch A–Z.
 - [sklearn 1.8 Common pitfalls](https://scikit-learn.org/1.8/common_pitfalls.html), [RMSE API](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.root_mean_squared_error.html).
 - [LightGBM Parameters](https://lightgbm.readthedocs.io/en/stable/Parameters.html): `subsample` cần `bagging_freq > 0` để hoạt động; bản cũ dùng objective regression_l1, không phải Huber như phần đầu notebook từng ghi.
+
+## 7. Tích hợp cập nhật GitHub trong lúc rà soát
+
+- `12eed4b` bổ sung source modeling/tuning, inference, replay, demo web và SQLite monitoring. Không bỏ thay đổi này khi đẩy phần Duy.
+- Hai xung đột README/requirements được giải quyết bằng README thống nhất và các phiên bản đã chạy model Duy; README upstream giữ thành tài liệu tham chiếu lịch sử.
+- Adapter nhận `model_handoff.json` của Duy, giữ nguyên model hash/dự báo, trả schema mà monitor/UI đang dùng. Adapter vẫn đọc được manifest `inference_v1` cũ khi người dùng chọn rõ đường dẫn artifact đó.
+- Default demo/check/predict/replay và monitored replay dùng run Duy; đọc CSV inference bằng round_trip để giữ số học.
+- Tests demo/monitoring dùng artifact công bố trong Git thay việc bị skip do model local thiếu. Test loaded inference đối chiếu bốn mốc với prediction Duy đã lưu.
+- JSON baseline state ghi LF ngay khi tạo, tránh checksum đổi sau checkout; kiểm bàn giao xác minh cả hash state và source.
+- Dashboard hiện là forecast/observation mode, không bật ngưỡng/buffer của model khác. SQLite ghi actual khi đủ số đo đã tới, mỗi reset tạo phiên riêng; theo dõi residual chưa tự là trigger drift.
+
+## 8. Bằng chứng nghiệm thu tự động
+
+- Môi trường .venv mới cài đúng requirements: 62/62 tests đạt, không skip; kiểm startup demo đạt.
+- Notebook 03 thực thi 8 cell code, notebook 02 thực thi 3 cell code với calibration/test=False, không error output.
+- Edge desktop/mobile: 24 bước đo, không lỗi JavaScript; kiểm actual trễ, play/pause, đổi phiên, cuối tháng, nhập sai ngày, chống ghi trùng/phiên cũ, text escape và nhật ký sau reload. Ảnh và JSON ở `reports/steel/duy_2026-10-02/demo_browser_check`.
+- Đo UI cục bộ trong lúc chạy replay khác: p95 request-to-render 130,95 ms, backend p95 115,18 ms. Đây là kiểm chức năng trong điều kiện có tác vụ khác, chưa chứng minh SLA 100 ms hoặc tốc độ nhà máy. Không thay số đo model-only bằng số này.
+- CLI replay đã sửa phần report để không phụ thuộc key riêng của inference_v1; kiểm nhanh 8 mốc exit 0, feature/prediction khớp. Bảng MAE của 8 mốc chỉ mô tả sample này; kết quả model chính vẫn là toàn validation tháng 9.
+- Bằng chứng có cấu trúc trong `release_verification.json`; hash baseline state/code/model kiểm thêm từ bản clone/ZIP.

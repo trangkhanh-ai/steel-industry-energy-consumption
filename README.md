@@ -4,7 +4,7 @@
 
 **Mục tiêu:** dự báo tổng **kWh của 60 phút tiếp theo** tại cơ sở thép, sau đó hỗ trợ người điều độ xem xét các khoảng tiêu thụ cao. Mỗi bản đo cách nhau 15 phút. Kiến trúc và phân công theo [kế hoạch A–Z](docs/team/ke_hoach_nhom_3_nguoi.md) và [Notion nhóm](https://app.notion.com/p/3eb7c2776902811896b1d75c0f11cf82?pvs=204).
 
-**Bản hiện tại ngày 02/10/2026:** chạy được dữ liệu → feature → baseline/model → dự báo; có biểu đồ, QA, kiểm thử và artifact bàn giao. Calibration/test mới và dashboard tích hợp chưa nghiệm thu. [Chi tiết rà soát và việc nhóm cần làm](docs/team/review_and_release_2026-10-02.md).
+**Bản hiện tại ngày 02/10/2026:** chạy được dữ liệu → feature → baseline/model → dự báo; có biểu đồ, QA, kiểm thử, model bàn giao và dashboard replay đã nối model. Calibration/test mới và policy cảnh báo chưa nghiệm thu. [Chi tiết rà soát và việc nhóm cần làm](docs/team/review_and_release_2026-10-02.md).
 
 ## 1. Bắt đầu từ đâu?
 
@@ -43,6 +43,24 @@ Linux/macOS dùng `.venv/bin/python`. Bản CSV UCI và model bàn giao đã có
 Script không ghi đè lần chạy trước. Có thể tải repo dạng ZIP; khi không có `.git`, metadata ghi commit là `null`.
 
 Notebook cần thêm `pip install -r requirements-notebooks.txt`, rồi chọn kernel `.venv`. Mở notebook từ repo hoặc thư mục `notebooks`. File `requirements-khanh.txt` dành cho thử nghiệm LightGBM riêng sau này; luồng chính hiện không cần LightGBM.
+
+## Demo của nhóm đã tích hợp
+
+Code demo/monitoring mới nhận từ commit nhóm `12eed4b` được giữ đầy đủ và nối trực tiếp với model Duy, không fit lại hay dùng buffer LightGBM.
+
+```powershell
+.venv\Scripts\python -m scripts.check_steel_demo_environment
+.venv\Scripts\python -X utf8 -m scripts.serve_steel_demo --port 8765
+```
+
+Mở **http://127.0.0.1:8765**. Chọn mốc tháng 9 → mở phiên → tiến từng bước 15 phút → xem dự báo, actual sau đủ 60 phút, MAE/bias và nhật ký người xem. Chưa bật policy cảnh báo; UI ghi rõ trạng thái này. Mỗi phiên có SQLite riêng trong `reports/steel/modeling/demo_sessions`, không đưa log cá nhân vào Git.
+
+- UI HTML/CSS/JavaScript, backend Python chuẩn; không cần Streamlit hoặc Node.
+- Demo bind loopback và chạy tuần tự, một phiên chung trên mỗi server. Dừng bằng Ctrl+C.
+- 62/62 unittest sau tích hợp đạt, không skip, kiểm cả dữ liệu/model, demo và monitoring; kiểm môi trường cài mới trên cùng máy. Khánh/Huy cần nghiệm thu trên máy mình.
+- Các lệnh train/tune/package cũ và source được giữ để đối chiếu; [README upstream lịch sử](docs/team/upstream_demo_12eed4b.md) mô tả artifact `inference_v1` riêng. Luồng mặc định ở README này dùng `duy_2026-10-02`.
+
+[Bằng chứng kiểm thử và ảnh demo](reports/steel/duy_2026-10-02/release_verification.json) · [Ảnh desktop](reports/steel/duy_2026-10-02/demo_browser_check/desktop.png) · [Ảnh mobile](reports/steel/duy_2026-10-02/demo_browser_check/mobile.png).
 
 ## 3. Dữ liệu và tiền xử lý
 
@@ -117,8 +135,8 @@ flowchart TD
 | Method Selection | Baseline, Ridge và HGB | Lựa chọn đã ghi protocol |
 | Model Development | Pipeline, cấu hình, validation, model hash, 31 mốc replay | Khánh kiểm chéo artifact |
 | Evaluation ba mức | Validation model-level; công cụ row/episode metrics | Khánh chạy calibration/test có kiểm soát, robustness; giá trị công nghiệp là kịch bản có giả định |
-| Deployment | API và lệnh dự báo thật từ lịch sử | Huy bổ sung UI Data → AI → Decision, policy và người duyệt |
-| Monitoring/Improvement | Yêu cầu cụ thể trong kế hoạch/review | Huy log chất lượng, nhãn trễ, drift và phiên bản |
+| Deployment | API và lệnh dự báo thật từ lịch sử | UI replay và nhật ký người xem đã có; Huy tích hợp policy và nghiệm thu nghiệp vụ |
+| Monitoring/Improvement | Yêu cầu cụ thể trong kế hoạch/review | Đã log chất lượng, nhãn trễ và residual; Huy bổ sung drift và quy trình cải tiến |
 | Reliability/Safety/Ethics | Ca sai, giới hạn dữ liệu, từ chối input lỗi, HITL trong problem card | Huy/Khánh kiểm tình huống lỗi trước nghiệm thu demo |
 
 Dữ liệu hiện chưa cho phép chứng minh giảm tiền điện, tránh phạt công suất, giảm downtime hoặc tăng năng suất. Bản hiện chưa có cảnh báo tích hợp hoàn chỉnh; API trả `forecast_only_no_alert_policy`.
@@ -137,7 +155,7 @@ notebooks/artifacts/            Artifact LightGBM lịch sử, không dùng vớ
 data/steel/                     CSV UCI và processed trước đây
 reports/steel/duy_2026-10-02/    Run bàn giao mới: hình, bảng, CSV và model
 docs/team/                      Problem card, phân công, decision log, review
-tests/                          34 kiểm thử rủi ro dữ liệu/model/QA/evaluation
+tests/                          Kiểm thử dữ liệu/model/QA/evaluation/demo/monitoring
 ```
 
 ## 7. Nguồn tham khảo

@@ -1,4 +1,5 @@
 .venv/
+.venv-*/
 venv/
 __pycache__/
 *.py[cod]
@@ -7,3 +8,8 @@ __pycache__/
 .env
 .env.*
 !.env.example
+reports/steel/modeling/**/*.joblib
+reports/steel/modeling/**/*.sqlite3*
+
+# Reproducible local model runs, logs, metrics and browser screenshots.
+reports/steel/modeling/

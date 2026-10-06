@@ -85,6 +85,23 @@ class SteelMonitoringTests(unittest.TestCase):
             self.assertEqual(result["status"], "model_unavailable")
             self.assertIsNone(result["prediction"])
             self.assertEqual(monitor.db.execute("SELECT COUNT(*) FROM forecasts").fetchone()[0], 0)
+            with self.assertRaises(ValueError):
+                monitor.record_decision(result["request_id"], self.t, "QA", "acknowledge", "Model absent", "ack")
+            monitor.record_decision(result["request_id"], self.t, "QA", "inspect", "Model absent", "inspect")
+            self.assertIsNone(monitor.decisions(self.t)[0]["context"]["predicted_kWh"])
+            self.assertEqual(monitor.decisions(self.t)[0]["context"]["status"], "model_unavailable")
+            monitor.forecast(self.until(self.t + pd.Timedelta(minutes=15)), self.t + pd.Timedelta(minutes=15))
+            # No future request or model-loading diagnostic in the denominator.
+            self.assertEqual(monitor.snapshot(self.t)["input_quality"]["forecast_attempts"], 1)
+
+    def test_input_error_rate_counts_retries_but_scores_forecasts_once(self):
+        self.monitor.forecast(self.initial, self.t)
+        self.monitor.forecast(self.initial, self.t)
+        self.monitor.forecast(self.initial.iloc[1:], self.t)
+        snapshot = self.monitor.snapshot(self.t)
+        self.assertEqual(snapshot["forecasts"], 1)
+        self.assertEqual(snapshot["input_quality"]["forecast_attempts"], 3)
+        self.assertAlmostEqual(snapshot["input_quality"]["invalid_history_rate"], 1 / 3)
 
 
 if __name__ == "__main__":

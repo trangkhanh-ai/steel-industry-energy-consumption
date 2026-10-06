@@ -36,6 +36,13 @@ function render(data){
   current=data; $('clock').textContent=data.clock?`${timestamp(data.clock)} / 2018`:'Chưa mở phiên';
   $('sessionNote').textContent=data.session?'Đồng hồ dữ liệu · mỗi bước 15 phút':'Chọn một thời điểm để bắt đầu.';
   const response=data.current_forecast, forecast=response?.prediction;
+  const model=data.model_info;
+  $('modelInfo').hidden=!model;
+  $('modelState').textContent=model?'Định danh và chỉ số từ model được nạp.':data.session?'Không nạp được mô hình. Cần kiểm tra bản bàn giao.':'Mở phiên để xem mô hình được nạp.';
+  for(const [id,value] of Object.entries({modelName:model?.name,modelRun:model?.run,
+    modelFeatures:model?.feature_implementation,modelHash:model?.model_sha256})) $(id).textContent=value||'—';
+  $('modelMae').textContent=number(model?.validation_mae_kWh);
+  $('modelRmse').textContent=number(model?.validation_rmse_kWh);
   $('prediction').textContent=forecast?`${number(forecast.predicted_next_60m_kWh)} kWh`:'—';
   $('horizon').textContent=forecast?`${timestamp(forecast.forecast_start)} → ${timestamp(forecast.forecast_end)}`:data.finished?'Đã kết thúc phiên dữ liệu':response?.detail?'Chưa có dự báo hợp lệ':'Chưa có dự báo';
   $('quality').textContent=data.finished?'Hoàn tất phát lại':response?statuses[response.status]||response.status:'Chưa có phiên';
@@ -58,7 +65,7 @@ function render(data){
   if(!data.decisions.length){const li=document.createElement('li');li.textContent='Chưa có ghi nhận trong phiên.';$('decisions').append(li);}
   chart(data.history);
   $('rows').replaceChildren();
-  for(const r of data.forecasts){const tr=document.createElement('tr');for(const v of [timestamp(r.issue_time),timestamp(r.forecast_end),number(r.prediction),number(r.actual),number(r.error),r.actual==null?'Chờ đủ 60 phút':'Đã đối chiếu']){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.lastChild.className=r.actual==null?'waiting':'available';$('rows').append(tr);}
+  for(const r of data.forecasts){const tr=document.createElement('tr');for(const v of [timestamp(r.issue_time),timestamp(r.forecast_end),number(r.prediction),number(r.actual),number(r.error),r.label_status==='waiting_for_observations'?'Đã đủ giờ · thiếu bản đo':r.actual==null?'Chờ đủ 60 phút':'Đã đối chiếu']){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.lastChild.className=r.actual==null?'waiting':'available';$('rows').append(tr);}
   if(!data.forecasts.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent='Chưa có dự báo. Mở phiên hoặc kiểm tra trạng thái xử lý.';tr.append(td);$('rows').append(tr);}
   const p=data.performance;
   $('ram').textContent=p?.process_rss_bytes!=null?`${number(p.process_rss_bytes/1048576)} MB`:'—';

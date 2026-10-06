@@ -81,6 +81,7 @@ class SteelForecaster:
     """Load one trusted local run once; reuse for sequential forecast requests."""
     def __init__(self, run_dir: Path):
         run_dir = Path(run_dir)
+        self.run_name = run_dir.name
         self.duy_forecaster = None
         if (run_dir / "model_handoff.json").exists():
             # Adapter giao diện cũ -> artifact Duy; không fit lại hay đổi model.
@@ -92,6 +93,7 @@ class SteelForecaster:
             if self.model_sha256 is None:
                 identity = self.configuration + ":" + metadata["baseline_state_sha256"]
                 self.model_sha256 = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            self.metadata = metadata
             return
         manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
         if manifest.get("feature_contract") != FEATURE_CONTRACT:
@@ -110,6 +112,25 @@ class SteelForecaster:
         parameters = frozen["parameters"][self.configuration]
         if any(self.model.get_params()[key] != value for key, value in parameters.items()):
             raise ValueError("Selected model parameters disagree with the frozen run")
+        self.metadata = manifest
+
+    def display_metadata(self) -> dict:
+        """Describe the successfully loaded artifact, never a different run's scores."""
+        metadata = self.metadata
+        def measured(value):
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and np.isfinite(value) and value >= 0:
+                return float(value)
+            return None
+        if self.duy_forecaster is not None:
+            mae, rmse = metadata.get("validation_mae_kWh"), metadata.get("validation_rmse_kWh")
+            feature_version = metadata.get("feature_implementation")
+        else:
+            metrics = metadata.get("metrics", {})
+            mae, rmse = metrics.get("mae_kWh"), metrics.get("rmse_kWh")
+            feature_version = metadata.get("feature_contract")
+        return {"name": self.configuration, "run": self.run_name,
+                "model_sha256": self.model_sha256, "feature_implementation": feature_version,
+                "validation_mae_kWh": measured(mae), "validation_rmse_kWh": measured(rmse)}
 
     def predict(self, history: pd.DataFrame, issue_time) -> dict:
         if self.duy_forecaster is not None:

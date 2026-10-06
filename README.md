@@ -57,10 +57,21 @@ Mở **http://127.0.0.1:8765**. Chọn mốc tháng 9 → mở phiên → tiến
 
 - UI HTML/CSS/JavaScript, backend Python chuẩn; không cần Streamlit hoặc Node.
 - Demo bind loopback và chạy tuần tự, một phiên chung trên mỗi server. Dừng bằng Ctrl+C.
-- 62/62 unittest sau tích hợp đạt, không skip, kiểm cả dữ liệu/model, demo và monitoring; kiểm môi trường cài mới trên cùng máy. Khánh/Huy cần nghiệm thu trên máy mình.
+- Bản tích hợp 02/10 ghi nhận 62/62 unittest đạt, không skip, trên máy Duy; bằng chứng lịch sử ở liên kết bên dưới. Khánh cần kiểm chéo trên máy mình.
+- Kiểm phần Huy ngày 06/10/2026 trên Windows/Python 3.12.6: 32 kiểm thử modeling/diagnostics/inference/monitoring/demo đạt; kiểm bàn giao nguồn/model và đối chiếu offline–online đạt. Edge kiểm luồng replay, ba thao tác ghi nhận, actual trễ, qua nửa đêm và desktop/mobile. Đây là kiểm cục bộ, chưa nghiệm thu policy cảnh báo.
+- UI đọc tên/hash và MAE/RMSE validation từ model đã nạp. Khi đủ giờ nhưng thiếu bản đo, actual vẫn trống. Lỗi model vẫn cho ghi đề nghị kiểm tra/bỏ qua; không cho xác nhận dự báo.
 - Các lệnh train/tune/package cũ và source được giữ để đối chiếu; [README upstream lịch sử](docs/team/upstream_demo_12eed4b.md) mô tả artifact `inference_v1` riêng. Luồng mặc định ở README này dùng `duy_2026-10-02`.
 
 [Bằng chứng kiểm thử và ảnh demo](reports/steel/duy_2026-10-02/release_verification.json) · [Ảnh desktop](reports/steel/duy_2026-10-02/demo_browser_check/desktop.png) · [Ảnh mobile](reports/steel/duy_2026-10-02/demo_browser_check/mobile.png).
+
+Kiểm riêng bốn ca lỗi bằng Edge đã cài trên máy (thiếu model, sai checksum bản sao model, thiếu bản đo đầu vào, đủ giờ nhưng thiếu bản đo actual):
+
+```powershell
+.venv\Scripts\python -m pip install -r requirements-ui-test.txt
+.venv\Scripts\python -m scripts.check_steel_demo_failures --output-dir reports/steel/modeling/failure_check_new
+```
+
+Lệnh tự mở server QA tạm, không thay CSV/model gốc. Chọn thư mục kết quả mới; nhật ký/ảnh kiểm tra nằm ngoài phần được Git theo dõi. Trên máy Huy, môi trường tương thích đã cài là `.venv-huy-check`; thay `.venv` trong lệnh nếu dùng môi trường đó.
 
 ## 3. Dữ liệu và tiền xử lý
 

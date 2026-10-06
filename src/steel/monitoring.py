@@ -130,6 +130,12 @@ class ForecastMonitor:
         status, detail, forecast_id, prediction = "invalid_history", None, None, None
         if self.model is None:
             status, detail = "model_unavailable", self.model_error
+            # Use the same timestamp format as replay decisions and metric filters,
+            # even when no model can be loaded. str(Timestamp) uses a space.
+            try:
+                issue = valid_time(issue_time).isoformat()
+            except (ValueError, TypeError):
+                pass
         else:
             try:
                 t = valid_time(issue_time)

@@ -1,5 +1,6 @@
 """Exercise replay navigation and payloads using the real local model/data."""
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -70,8 +71,43 @@ class SteelDemoTests(unittest.TestCase):
                 self.assertIsNone(state["current_forecast"]["prediction"])
                 self.assertEqual(state["forecasts"], [])
                 self.assertTrue(state["errors"])
+                self.assertIsNone(state["model_info"])
             finally:
                 demo.close()
+
+    def test_display_metadata_identifies_the_loaded_model_and_its_validation(self):
+        self.assertIsNone(self.demo.state()["model_info"])
+        state = self.demo.dispatch("reset", "2018-09-01T08:00")
+        manifest = json.loads((self.demo.model_dir / "model_handoff.json").read_text())
+        info = state["model_info"]
+        self.assertEqual(info["name"], manifest["selected_model"])
+        self.assertEqual(info["run"], self.demo.model_dir.name)
+        self.assertEqual(info["model_sha256"], state["current_forecast"]["prediction"]["model_sha256"])
+        self.assertEqual(info["validation_mae_kWh"], manifest["validation_mae_kWh"])
+        self.assertEqual(info["validation_rmse_kWh"], manifest["validation_rmse_kWh"])
+        self.assertEqual(info["feature_implementation"], manifest["feature_implementation"])
+
+    def test_matured_forecast_with_missing_real_observation_is_not_scored(self):
+        self.demo.dispatch("reset", "2018-09-01T08:00")
+        # Remove a real row only in this session; do not change measurements or CSV.
+        self.demo.history = self.demo.history.loc[
+            self.demo.history.observation_time.ne(pd.Timestamp("2018-09-01 08:30"))]
+        for _ in range(4):
+            state = self.demo.dispatch("step")
+        original = next(r for r in state["forecasts"] if r["issue_time"] == "2018-09-01T08:00:00")
+        self.assertEqual(original["label_status"], "waiting_for_observations")
+        self.assertIsNone(original["actual"])
+        self.assertIsNone(original["error"])
+        self.assertEqual(state["metrics"]["models"][0]["all_matured"]["rows"], 0)
+
+    def test_midnight_keeps_same_session_and_waits_for_real_actuals(self):
+        initial = self.demo.dispatch("reset", "2018-09-01T23:45")
+        for i in range(4):
+            state = self.demo.dispatch("step")
+            self.assert_no_future(state)
+            self.assertEqual(state["session"], initial["session"])
+            self.assertEqual(state["metrics"]["models"][0]["all_matured"]["rows"], int(i == 3))
+        self.assertEqual(state["clock"], "2018-09-02T00:45:00")
 
     def decision(self, state, **changes):
         return {"session": state["session"], "clock": state["clock"],

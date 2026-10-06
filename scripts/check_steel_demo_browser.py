@@ -40,6 +40,11 @@ def run(url, output):
 
         initial = start("2018-09-01T08:00")
         assert initial["forecasts"][0]["actual"] is None
+        page.locator("#modelDetails").evaluate("el => el.open = true")
+        expect(page.locator("#modelName")).to_have_text(initial["model_info"]["name"])
+        expect(page.locator("#modelHash")).to_have_text(initial["current_forecast"]["prediction"]["model_sha256"])
+        expected_mae = page.evaluate("v => new Intl.NumberFormat('vi-VN', {maximumFractionDigits:2, minimumFractionDigits:2}).format(v)", initial["model_info"]["validation_mae_kWh"])
+        expect(page.locator("#modelMae")).to_have_text(expected_mae)
         page.locator("#inspect").click()
         expect(page.locator("#decisionFeedback")).to_contain_text("Nhập tên")
         assert not page.request.get(url+"/api/state").json()["decisions"]
@@ -59,6 +64,11 @@ def run(url, output):
         page.reload(wait_until="networkidle")
         expect(page.locator("#step")).to_be_enabled()
         assert len(page.request.get(url+"/api/state").json()["decisions"]) == 2
+        page.locator("#operator").fill("QA trình duyệt · không phải thao tác nhà máy")
+        page.locator("#decisionNote").fill("Đã xem dự báo; chưa kết luận tải an toàn.")
+        page.locator("#acknowledge").click()
+        expect(page.locator("#decisionFeedback")).to_contain_text("Đã lưu")
+        assert len(page.request.get(url+"/api/state").json()["decisions"]) == 3
         measurements = []
         for i in range(24):
             state = step()
@@ -68,6 +78,7 @@ def run(url, output):
                 assert state["metrics"]["models"][0]["all_matured"]["rows"] == 0
             if i == 3:
                 assert state["metrics"]["models"][0]["all_matured"]["rows"] == 1
+                page.locator("#modelDetails").evaluate("el => el.open = true")
                 page.screenshot(path=str(output / "desktop.png"), full_page=True)
         # Play advances the clock; pause stops subsequent scheduled steps.
         before = page.locator("#clock").inner_text()
@@ -83,10 +94,44 @@ def run(url, output):
         assert reset["metrics"]["models"][0]["all_matured"]["rows"] == 0
         assert all(row["actual"] is None for row in reset["forecasts"])
         assert not reset["decisions"]
+        page.locator("#modelDetails").evaluate("el => el.open = true")
         page.set_viewport_size({"width": 390, "height": 844})
         page.screenshot(path=str(output / "mobile.png"), full_page=True)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.set_viewport_size({"width": 1440, "height": 1080})
+        midnight = start("2018-09-01T23:45")
+        for i in range(4):
+            crossed = step()
+            no_future(crossed)
+            assert crossed["session"] == midnight["session"]
+            assert crossed["metrics"]["models"][0]["all_matured"]["rows"] == int(i == 3)
+        assert crossed["clock"] == "2018-09-02T00:45:00"
+        # A second tab retains the previous clock/session until refreshed.
+        stale = browser.new_page()
+        stale.on("pageerror", lambda error: errors.append(str(error)))
+        for change in ("clock", "session"):
+            stale.goto(url, wait_until="networkidle")
+            expect(stale.locator("#inspect")).to_be_enabled()
+            stale.locator("#operator").fill("QA trang cũ")
+            stale.locator("#decisionNote").fill("Ghi nhận từ trang chưa cập nhật.")
+            if change == "clock":
+                step()
+            else:
+                start("2018-09-02T00:45")
+            stale.locator("#inspect").click()
+            expect(stale.locator("#error")).to_contain_text("Phiên hoặc thời điểm đã đổi")
+            assert not page.request.get(url+"/api/state").json()["decisions"]
+        stale.close()
+        current = page.request.get(url+"/api/state").json()
+        command = {"session": current["session"], "clock": current["clock"],
+                   "request_id": current["current_forecast"]["request_id"],
+                   "operator": "QA retry", "action": "inspect", "note": "Kiểm gửi lại yêu cầu.",
+                   "token": "browser-retry-check"}
+        for _ in range(2):
+            assert page.request.post(url+"/api/decision", data=command).status == 200
+        assert len(page.request.get(url+"/api/state").json()["decisions"]) == 1
+        assert page.request.post(url+"/api/decision", data={**command, "note": "Khác nội dung"}).status == 400
+        assert len(page.request.get(url+"/api/state").json()["decisions"]) == 1
         start("2018-09-30T22:45")
         for i in range(4):
             final = step(final=i==3)
@@ -98,7 +143,9 @@ def run(url, output):
         assert page.request.post(url+"/api/step", data={}, headers={"Origin":"https://example.invalid"}).status == 403
         assert page.request.post(url+"/api/decision", data={}, headers={"Origin":"https://example.invalid"}).status == 403
         assert not errors, errors
-        summary = {"checks": "real-data navigation, delayed actuals, play/pause, isolated reset, month end, mobile overflow, invalid-date and foreign-origin rejection; decision required fields, inspection/dismissal, escaped text and persistence on reload",
+        summary = {"checks": "loaded-model metadata and validation MAE; real-data navigation, delayed actuals, midnight, play/pause, isolated reset, month end, mobile overflow, invalid-date and foreign-origin rejection; decision required fields, acknowledge/inspect/dismiss, escaped text and persistence on reload",
+                   "model_info": initial["model_info"],
+                   "decision_guards": "stale clock/session rejected through UI; identical HTTP retry stored once; changed retry content rejected",
                    "browser": browser.version, "javascript_errors": errors, "measured_step_requests": len(measurements),
                    "request_to_render_p50_ms": float(np.median([r["request_to_render_ms"] for r in measurements])),
                    "request_to_render_p95_ms": float(np.quantile([r["request_to_render_ms"] for r in measurements], .95)),

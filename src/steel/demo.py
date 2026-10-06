@@ -117,9 +117,11 @@ class ReplayDemo:
                 "end": self.END.isoformat(), "finished": self.current == self.END,
                 "alert_policy": "not_configured", "source": "UCI Steel · dữ liệu đo năm 2018",
                 "history": [], "forecasts": [], "errors": [], "metrics": None, "current_forecast": None,
-                "decisions": []}
+                "decisions": [], "model_info": None}
         if self.monitor is None:
             return base
+        if self.monitor.model is not None:
+            base["model_info"] = self.monitor.model.display_metadata()
         observed = self.history.loc[self.history.observation_time.le(self.current)].tail(96)
         base["history"] = [{"time": t.isoformat(), "usage_kWh": float(v)} for t,v in observed.itertuples(index=False, name=None)]
         base["current_forecast"] = self.last_response
@@ -131,6 +133,7 @@ class ReplayDemo:
             base["forecasts"].append({"issue_time": r["issue_time"], "forecast_end": r["forecast_end"],
                                       "prediction": r["predicted_kWh"], "actual": r["actual_kWh"] if ready else None,
                                       "error": r["predicted_kWh"]-r["actual_kWh"] if ready else None,
-                                      "label_status": "available" if ready else "waiting"})
+                                      "label_status": "available" if ready else
+                                      ("waiting_for_observations" if r["forecast_end"] <= self.current.isoformat() else "waiting")})
         base["errors"] = [dict(r) for r in self.monitor.db.execute("SELECT issue_time,status,detail FROM requests WHERE status!='forecast_ready' ORDER BY id DESC LIMIT 5")]
         return base

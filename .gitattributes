@@ -1,2 +1,7 @@
 # Preserve the official CSV byte-for-byte so its SHA-256 stays verifiable.
 data/steel/raw/Steel_industry_data.csv -text -diff
+*.py text eol=lf
+*.md text eol=lf
+*.ipynb text eol=lf
+*.json text eol=lf
+*.txt text eol=lf

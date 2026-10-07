@@ -1,0 +1,13 @@
+{
+  "checks": "real-data navigation, delayed actuals, play/pause, isolated reset, month end, mobile overflow, invalid-date and foreign-origin rejection; decision required fields, inspection/dismissal, escaped text and persistence on reload",
+  "browser": "154.0.4258.37",
+  "javascript_errors": [],
+  "measured_step_requests": 24,
+  "request_to_render_p50_ms": 82.80000001192093,
+  "request_to_render_p95_ms": 130.94999999999996,
+  "backend_p95_ms": 115.17589997965838,
+  "process_cpu_p95_ms": 93.75,
+  "server_rss_max_MB": 138.515625,
+  "model_bytes": 276430,
+  "scope": "Headless Edge, local server, 24 measured real September steps. RAM covers server only, not browser. Not a production or sustained-load benchmark."
+}

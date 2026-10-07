@@ -1,80 +1,180 @@
-# Dự báo điện năng ngành thép — giai đoạn chuẩn bị dữ liệu
+# Dự báo điện năng ngành thép — đồ án AI trong Công nghiệp
 
-Bản này công bố **phần dữ liệu** của đồ án *Ứng dụng AI trong Công nghiệp*: kiểm tra dữ liệu gốc, phân tích 3B, tạo nhãn dự báo, tạo đặc trưng từ quá khứ, chia tập theo thời gian và trực quan hóa. Bài toán là dự báo **tổng kWh của 60 phút tiếp theo** tại một cơ sở thép để người quản lý năng lượng có thêm thông tin trước khi xem xét giờ tải cao.
+**Nhóm:** Duy (problem, dữ liệu, baseline/model) · Khánh (QA, calibration/evaluation) · Huy (demo, monitoring, tài liệu nộp).
 
-**Nguồn:** [UCI Steel Industry Energy Consumption](https://archive.ics.uci.edu/dataset/851/steel+industry+energy+consumption), DOI [10.24432/C52G8C](https://doi.org/10.24432/C52G8C), giấy phép CC BY 4.0. Dữ liệu gốc gồm **35.040 bản ghi × 11 cột**, cách nhau 15 phút trong năm 2018. Bản CSV trong repo được giữ nguyên byte và kiểm tra SHA-256 trước khi xử lý.
+**Mục tiêu:** dự báo tổng **kWh của 60 phút tiếp theo** tại cơ sở thép, sau đó hỗ trợ người điều độ xem xét các khoảng tiêu thụ cao. Mỗi bản đo cách nhau 15 phút. Kiến trúc và phân công theo [kế hoạch A–Z](docs/team/ke_hoach_nhom_3_nguoi.md) và [Notion nhóm](https://app.notion.com/p/3eb7c2776902811896b1d75c0f11cf82?pvs=204).
 
-## Chạy lại
+**Bản hiện tại ngày 02/10/2026:** chạy được dữ liệu → feature → baseline/model → dự báo; có biểu đồ, QA, kiểm thử, model bàn giao và dashboard replay đã nối model. Calibration/test mới và policy cảnh báo chưa nghiệm thu. [Chi tiết rà soát và việc nhóm cần làm](docs/team/review_and_release_2026-10-02.md).
 
-Từ thư mục gốc repo với Python 3.12 trở lên:
+## 1. Bắt đầu từ đâu?
+
+| Cần đọc/làm | Tệp |
+|---|---|
+| Chốt bài toán, người dùng, quyết định và ràng buộc | [Problem card của Duy](docs/team/duy_problem_card.md) |
+| Biết việc của ba người từ đầu đến khi nộp | [Kế hoạch A–Z](docs/team/ke_hoach_nhom_3_nguoi.md) |
+| Hiểu code, kết quả và tài liệu cần học | [Hướng dẫn phần Duy](docs/team/duy_implementation_and_learning.md) |
+| Đọc dữ liệu và xem hình từng bước | [Notebook 03 của Duy](notebooks/03_duy_steel_data_and_models.ipynb) |
+| Calibration/evaluation đúng model đã khóa | [Notebook 02 của Khánh](notebooks/02_steel_modeling_evaluation.ipynb), mặc định chưa chạy calibration/test |
+| Xem các lỗi đã sửa và việc còn thiếu | [Rà soát 02/10](docs/team/review_and_release_2026-10-02.md) |
+
+## 2. Chạy trên máy cá nhân
+
+Mở terminal tại thư mục gốc repo. Môi trường đã chạy: **Python 3.14.3**; các gói được khóa trong `requirements.txt`. Máy mới cần Python 3.12+; kết quả khác phiên bản Python/hệ điều hành cần kiểm lại bằng các lệnh bên dưới. Model joblib yêu cầu **scikit-learn 1.8.0**.
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m scripts.prepare_steel_data
-.venv\Scripts\python -m unittest discover -s tests -p test_steel_preprocessing.py -v
+.venv\Scripts\python -m unittest discover -s tests -v
+.venv\Scripts\python -m scripts.audit_features_and_leakage
+.venv\Scripts\python -m scripts.check_duy_handoff --run-dir reports/steel/duy_2026-10-02
+.venv\Scripts\python -m scripts.predict_duy_steel --run-dir reports/steel/duy_2026-10-02 --issue-time 2018-09-01T08:00:00
 ```
 
-Trên Linux/macOS, thay `.venv\Scripts\python` bằng `.venv/bin/python`. Lệnh chuẩn bị dữ liệu tạo lại bốn CSV, JSON kiểm toán, bảng truy vết từng dòng, hồ sơ cột train và năm hình PNG. Không cần tải thêm dữ liệu vì bản CSV gốc đã có trong repo.
+Linux/macOS dùng `.venv/bin/python`. Bản CSV UCI và model bàn giao đã có trong repo. Chỉ nạp joblib của nguồn nhóm tin cậy; checksum kiểm tính toàn vẹn của file.
 
-## Quy trình và kết quả
+Để huấn luyện lại cùng cấu hình, chọn **thư mục kết quả chưa tồn tại**:
 
-| Bước | Việc đã làm | Lý do |
-| --- | --- | --- |
-| Đọc nguồn | Kiểm tra hash, đúng 11 cột, parse `DD/MM/YYYY HH:MM` rồi sắp xếp thời gian. | File UCI đặt bản ghi `00:00` cuối ngày; có **365** lần thứ tự thời gian lùi. |
-| Kiểm tra chất lượng | Kiểm tra đủ lưới 15 phút, không trùng mốc, giá trị hữu hạn/không âm và cột lịch khớp timestamp. | Tránh tạo lag hoặc nhãn sai khi nguồn bị hỏng. Sau sort có **0 ô thiếu, 0 mốc trùng, 0 khoảng gián đoạn**. |
-| Tạo nhãn | `target_next_60m_kWh(t) = Usage(t+15m) + Usage(t+30m) + Usage(t+45m) + Usage(t+60m)`. | Đúng câu hỏi vận hành: điện năng cộng dồn trong một giờ tương lai; đơn vị **kWh**, không phải kW. |
-| Tạo feature | 15 biến mặc định gồm lag, thống kê quá khứ và lịch biết trước. | Tại thời điểm `t`, không dùng bản đo sau `t` làm đầu vào. `CO2(tCO2)` và `Load_Type` không dùng mặc định vì chưa rõ thời điểm có sẵn và ý nghĩa vận hành. |
-| Chia tập | Train tháng 1–8, validation tháng 9, calibration tháng 10, test tháng 11–12. | Không xáo trộn thời gian; loại các nhãn vượt qua ranh giới tập. |
+```powershell
+.venv\Scripts\python -m scripts.run_duy_pipeline --output-dir reports/steel/duy_reproduction_01
+.venv\Scripts\python -m scripts.audit_features_and_leakage --processed-dir reports/steel/duy_reproduction_01/processed
+.venv\Scripts\python -m scripts.check_duy_handoff --run-dir reports/steel/duy_reproduction_01
+```
 
-| Tập | Số mốc dự báo |
-| --- | ---: |
-| Train | 22.652 |
-| Validation | 2.876 |
-| Calibration | 2.972 |
-| Test | 5.852 |
-| **Tổng dùng được** | **34.352** |
+Script không ghi đè lần chạy trước. Có thể tải repo dạng ZIP; khi không có `.git`, metadata ghi commit là `null`.
 
-**688 mốc không dùng:** 672 mốc đầu chưa đủ lịch sử bảy ngày, 12 mốc có nhãn chạm qua ba ranh giới tập và 4 mốc cuối chưa có đủ bốn bản đo tương lai. Lý do của **toàn bộ 35.040 mốc** nằm trong [`steel_row_manifest.csv`](data/steel/processed/steel_row_manifest.csv).
+Notebook cần thêm `pip install -r requirements-notebooks.txt`, rồi chọn kernel `.venv`. Mở notebook từ repo hoặc thư mục `notebooks`. File `requirements-khanh.txt` dành cho thử nghiệm LightGBM riêng sau này; luồng chính hiện không cần LightGBM.
 
-### 3B và quyết định xử lý
+## Demo của nhóm đã tích hợp
 
-- **Broken:** nguồn không thiếu ô/khoảng sau sắp xếp; lỗi cần xử lý là thứ tự thời gian. Pipeline dừng khi gặp nguồn thiếu hoặc mốc đo sai, không tự nội suy.
-- **Bad Quality:** có một bản ghi `Usage_kWh = 0` và các đỉnh cao. Không có nhật ký cảm biến để xác định chúng là lỗi, nên giữ nguyên, không cắt p99.
-- **Background:** không có dữ liệu máy, sản lượng, ca làm, biểu giá hay hành động điều khiển. Vì vậy dữ liệu này hỗ trợ nghiên cứu dự báo, **chưa chứng minh tiết kiệm điện thực tế**.
+Code demo/monitoring mới nhận từ commit nhóm `12eed4b` được giữ đầy đủ và nối trực tiếp với model Duy, không fit lại hay dùng buffer LightGBM.
 
-Không scale trong CSV đã xử lý. Khi huấn luyện mô hình cần scale, scaler phải **fit trên train** rồi áp dụng nguyên vẹn cho các tập sau. Bài toán hiện là hồi quy với 15 feature; chưa cần PCA hay cân bằng lớp bằng SMOTE.
+```powershell
+.venv\Scripts\python -m scripts.check_steel_demo_environment
+.venv\Scripts\python -X utf8 -m scripts.serve_steel_demo --port 8765
+```
 
-## Biểu đồ khám phá dữ liệu
+Mở **http://127.0.0.1:8765**. Chọn mốc tháng 9 → mở phiên → tiến từng bước 15 phút → xem dự báo, actual sau đủ 60 phút, MAE/bias và nhật ký người xem. Chưa bật policy cảnh báo; UI ghi rõ trạng thái này. Mỗi phiên có SQLite riêng trong `reports/steel/modeling/demo_sessions`, không đưa log cá nhân vào Git.
 
-**Tất cả hình bên dưới chỉ dùng dữ liệu tháng 1–8 (train)** để không nhìn vào các giai đoạn dùng chọn/đánh giá mô hình:
+- UI HTML/CSS/JavaScript, backend Python chuẩn; không cần Streamlit hoặc Node.
+- Demo bind loopback và chạy tuần tự, một phiên chung trên mỗi server. Dừng bằng Ctrl+C.
+- Bản tích hợp 02/10 ghi nhận 62/62 unittest đạt, không skip, trên máy Duy; bằng chứng lịch sử ở liên kết bên dưới. Khánh cần kiểm chéo trên máy mình.
+- Kiểm phần Huy ngày 06/10/2026 trên Windows/Python 3.12.6: 32 kiểm thử modeling/diagnostics/inference/monitoring/demo đạt; kiểm bàn giao nguồn/model và đối chiếu offline–online đạt. Edge kiểm luồng replay, ba thao tác ghi nhận, actual trễ, qua nửa đêm và desktop/mobile. Đây là kiểm cục bộ, chưa nghiệm thu policy cảnh báo.
+- UI đọc tên/hash và MAE/RMSE validation từ model đã nạp. Khi đủ giờ nhưng thiếu bản đo, actual vẫn trống. Lỗi model vẫn cho ghi đề nghị kiểm tra/bỏ qua; không cho xác nhận dự báo.
+- Các lệnh train/tune/package cũ và source được giữ để đối chiếu; [README upstream lịch sử](docs/team/upstream_demo_12eed4b.md) mô tả artifact `inference_v1` riêng. Luồng mặc định ở README này dùng `duy_2026-10-02`.
 
-| Hình | Giúp trả lời |
-| --- | --- |
-| [Tuần đầu](reports/steel/figures/steel_train_first_week.png) | Chuỗi 15 phút thay đổi trong một tuần như thế nào? |
-| [Phân bố](reports/steel/figures/steel_train_distributions.png) | Bản đo 15 phút và nhãn 60 phút có đuôi cao ra sao? |
-| [Thứ × giờ](reports/steel/figures/steel_train_hour_weekday.png) | Mức sử dụng trung bình khác nhau theo lịch không? |
-| [Tổng theo ngày](reports/steel/figures/steel_train_daily_totals.png) | Mức sử dụng có thay đổi giữa các tháng không? |
-| [Tương quan lag](reports/steel/figures/steel_train_lag_correlations.png) | Các mốc 15 phút, 1 giờ, 1 ngày, 1 tuần trước liên hệ với hiện tại thế nào? |
+[Bằng chứng kiểm thử và ảnh demo](reports/steel/duy_2026-10-02/release_verification.json) · [Ảnh desktop](reports/steel/duy_2026-10-02/demo_browser_check/desktop.png) · [Ảnh mobile](reports/steel/duy_2026-10-02/demo_browser_check/mobile.png).
 
-![Mức điện năng trung bình theo thứ và giờ, chỉ trên train](reports/steel/figures/steel_train_hour_weekday.png)
+Kiểm riêng bốn ca lỗi bằng Edge đã cài trên máy (thiếu model, sai checksum bản sao model, thiếu bản đo đầu vào, đủ giờ nhưng thiếu bản đo actual):
 
-Trên train, median điện năng 15 phút là **4,75 kWh**, p95 **102,02 kWh**. Tương quan với bản đo trước 15 phút, 1 giờ, 1 ngày, 1 tuần lần lượt khoảng **0,91; 0,69; 0,61; 0,67**. Đây là mô tả dữ liệu, **không phải điểm số dự báo**. Bản chi tiết và cách diễn giải thận trọng nằm trong [báo cáo chuẩn bị dữ liệu](reports/steel/data_preparation.md).
+```powershell
+.venv\Scripts\python -m pip install -r requirements-ui-test.txt
+.venv\Scripts\python -m scripts.check_steel_demo_failures --output-dir reports/steel/modeling/failure_check_new
+```
 
-## Tệp chính
+Lệnh tự mở server QA tạm, không thay CSV/model gốc. Chọn thư mục kết quả mới; nhật ký/ảnh kiểm tra nằm ngoài phần được Git theo dõi. Trên máy Huy, môi trường tương thích đã cài là `.venv-huy-check`; thay `.venv` trong lệnh nếu dùng môi trường đó.
+
+## 3. Dữ liệu và tiền xử lý
+
+**Nguồn:** [UCI Steel Industry Energy Consumption](https://archive.ics.uci.edu/dataset/851/steel+industry+energy+consumption), [DOI 10.24432/C52G8C](https://doi.org/10.24432/C52G8C), **CC BY 4.0**. Nguồn gồm **35.040 hàng × 11 cột**, năm 2018. CSV nguyên byte có SHA-256:
 
 ```text
-data/steel/raw/Steel_industry_data.csv       Nguồn UCI nguyên trạng
-data/steel/processed/                     Bốn tập và tệp kiểm toán
-src/steel/preprocessing.py                 Kiểm tra, tạo nhãn/feature, chia tập
-src/steel/sequences.py                     Cửa sổ quá khứ cho thử nghiệm DL sau này
-scripts/prepare_steel_data.py              Lệnh tạo dữ liệu và biểu đồ
-reports/steel/figures/                     Năm biểu đồ train
-reports/steel/data_preparation.md           Giải thích 3B, số liệu và mọi quyết định
-docs/data/steel_data_dictionary.md         Từ điển cột và thời điểm có sẵn
-tests/test_steel_preprocessing.py           Kiểm thử nhãn, rò rỉ, ranh giới và dữ liệu lỗi
+9b1cee6f9cb9cd9df2b95814ca90a9a2ff15b7f5f1fba0fae3c643e82072eacc
 ```
 
-Tham khảo phương pháp: [scikit-learn về data leakage và tiền xử lý nhất quán](https://scikit-learn.org/stable/common_pitfalls.html), [pandas `shift` cho lag](https://pandas.pydata.org/docs/reference/api/pandas.Series.shift.html). Những số liệu và hình trong repo được tính lại từ bản CSV UCI; chúng không phải kết quả do UCI công bố.
+| Yêu cầu dữ liệu | Quyết định và lý do |
+|---|---|
+| Broken | Raw có 365 lần timestamp lùi; parse ngày khai báo, sort, kiểm đủ lưới 15 phút. Sau sort: không gap, trùng hoặc ô thiếu. Không tự sửa ngày 00:00. |
+| Bad Quality | Giữ một giá trị zero và đỉnh tải vì thiếu bằng chứng sensor lỗi. Không cắt p99; chặn NaN/Inf/âm và timestamp lỗi. |
+| Background | Thiếu lịch ca, sản lượng, máy, TOU, hợp đồng, BESS và hành động thật. Phạm vi là nghiên cứu dự báo và hỗ trợ kiểm tra. |
+| Missing/outliers | Không nội suy nguồn sạch; không tự điền lịch sử mất khi inference. Model yêu cầu đủ 673 bản đo. |
+| Target | `Usage(t+1)+Usage(t+2)+Usage(t+3)+Usage(t+4)`; mỗi bước 15 phút. |
+| Features | 15 biến Usage quá khứ và lịch biết trước; `lag_0` hợp lệ sau khi bản đo t hoàn tất. CO2/Load_Type không là input mặc định; sensor optional chỉ lưu để đối chiếu. |
+| Scaling | CSV giữ đơn vị gốc. Ridge dùng `Pipeline(StandardScaler, Ridge)` fit trên train; HGB không cần scaler. |
+| Feature selection/PCA/imbalance | Chọn 15 biến theo khả năng có sẵn và ý nghĩa thời gian. Chưa cần PCA, SMOTE hoặc deep learning để đáp ứng bài toán hồi quy hiện tại. |
 
-**Phạm vi bản đẩy này:** chưa gồm model, điểm MAE/RMSE, dashboard hoặc tuyên bố hiệu quả công nghiệp. Các bước method selection → development → evaluation → deployment → monitoring thuộc các phần tiếp theo của lifecycle đồ án.
+**Giả định timestamp:** bản đo tại t đã hoàn tất và có sẵn khi phát dự báo. UCI chưa xác nhận rõ quy ước đầu/cuối khoảng đo; cần xác nhận trước dùng vận hành thật.
+
+| Tập | Giai đoạn | Số mốc dùng được | Công dụng |
+|---|---|---:|---|
+| Train | Tháng 1–8 | 22.652 | Fit model/scaler/baseline theo lịch |
+| Validation | Tháng 9 | 2.876 | Chọn model và xem ca sai |
+| Calibration | Tháng 10 | 2.972 | Khánh hiệu chỉnh buffer sau khi khóa model |
+| Test | Tháng 11–12 | 5.852 | Đánh giá model/policy đã khóa |
+
+Tổng dùng **34.352**, loại **688**: 672 chưa đủ lag tuần, 12 nhãn chạm qua ranh giới và 4 cuối năm thiếu nhãn tương lai. Manifest giải thích từng hàng. Test đã được xem trong lịch sử; không mô tả lần đánh giá sau là test mù.
+
+**Hai phiên bản feature:** dữ liệu `data/steel/processed` giữ pipeline pandas trước đây để đối chiếu. Lần model mới dùng `reports/steel/duy_2026-10-02/processed`, metadata `duy_numpy_windows_v1`; rolling tính từng cửa sổ NumPy để batch/replay khớp số học. Không trộn các processed/model khác phiên bản.
+
+## 4. So sánh phương pháp và kết quả validation
+
+Train tháng 1–8, chọn trên MAE tháng 9; so sánh cả bốn baseline và bốn cấu hình AI. Nếu bằng MAE, ưu tiên baseline. Không chọn model bằng test.
+
+| Phương pháp | MAE kWh | RMSE kWh |
+|---|---:|---:|
+| **HGB, 31 lá** | **15,8829** | **32,0475** |
+| HGB, 15 lá | 16,3177 | 32,5934 |
+| Giờ gần nhất | 32,3238 | 69,1155 |
+| Ridge, alpha=1 | 33,0168 | 50,9669 |
+| Ridge, alpha=100 | 33,0307 | 51,0115 |
+| Cùng giờ tuần trước | 43,4543 | 81,9046 |
+| Cùng giờ ngày trước | 47,2319 | 91,0016 |
+| Trung bình thứ/giờ, học train | 49,9719 | 78,6894 |
+
+MAE HGB giảm **50,86%** so với baseline tốt nhất trên validation. Vùng cao có **93 mẫu**, MAE **68,6963 kWh**; dự báo điểm chưa đủ để khẳng định cảnh báo an toàn. [Bảng số, ca sai, protocol và model handoff](reports/steel/duy_2026-10-02/RESULTS.md).
+
+**Trực quan:** bảy hình train và ba hình validation trong [thư mục figures](reports/steel/duy_2026-10-02/figures). EDA train không dùng các tập về sau; hình validation dùng riêng để chẩn đoán dự báo.
+
+![So sánh MAE validation](reports/steel/duy_2026-10-02/figures/validation_model_comparison.png)
+
+## 5. Đối chiếu yêu cầu thầy và kiến trúc
+
+```mermaid
+flowchart TD
+    A[Data Source: CSV UCI / replay bản đo] --> B[Data Processing: quality gate và 15 feature]
+    B --> C[AI Model: model đã khóa]
+    C --> D[Prediction: kWh giờ tới]
+    D --> E[Decision Support: policy cảnh báo do Khánh hiệu chỉnh]
+    E --> F[Human / System: người điều độ xem và xác nhận]
+    F --> G[Industrial Action: kiểm tra lịch tải và ghi nhận hành động mô phỏng]
+```
+
+| Lifecycle/yêu cầu | Bằng chứng trong repo | Việc tiếp theo |
+|---|---|---|
+| Problem Definition | Problem card: vấn đề, mục tiêu, người dùng, quyết định, ràng buộc | Nhóm kiểm chéo nghiệp vụ |
+| Data Understanding | Dictionary, 3B, audit và hình EDA | Xác nhận thêm context/timestamp nếu có nguồn |
+| Data Preparation | Target/lag/rolling, temporal split, manifest, QA | Khánh nghiệm thu metadata và causality |
+| Method Selection | Baseline, Ridge và HGB | Lựa chọn đã ghi protocol |
+| Model Development | Pipeline, cấu hình, validation, model hash, 31 mốc replay | Khánh kiểm chéo artifact |
+| Evaluation ba mức | Validation model-level; công cụ row/episode metrics | Khánh chạy calibration/test có kiểm soát, robustness; giá trị công nghiệp là kịch bản có giả định |
+| Deployment | API và lệnh dự báo thật từ lịch sử | UI replay và nhật ký người xem đã có; Huy tích hợp policy và nghiệm thu nghiệp vụ |
+| Monitoring/Improvement | Yêu cầu cụ thể trong kế hoạch/review | Đã log chất lượng, nhãn trễ và residual; Huy bổ sung drift và quy trình cải tiến |
+| Reliability/Safety/Ethics | Ca sai, giới hạn dữ liệu, từ chối input lỗi, HITL trong problem card | Huy/Khánh kiểm tình huống lỗi trước nghiệm thu demo |
+
+Dữ liệu hiện chưa cho phép chứng minh giảm tiền điện, tránh phạt công suất, giảm downtime hoặc tăng năng suất. Bản hiện chưa có cảnh báo tích hợp hoàn chỉnh; API trả `forecast_only_no_alert_policy`.
+
+## 6. Thư mục chính
+
+```text
+src/steel/preprocessing.py       Kiểm nguồn, target, split và manifest
+src/steel/duy_forecasting.py     Feature batch/replay, baseline, Ridge/HGB
+src/steel/duy_inference.py       Nạp artifact đúng hash/schema và dự báo
+src/steel/evaluation.py          Buffer, row metrics, episode overlap
+scripts/                        Các lệnh prepare, QA, train, predict, check
+notebooks/                      Notebook dữ liệu, Duy và Khánh
+notebooks/archive/              Notebook LightGBM trước sửa
+notebooks/artifacts/            Artifact LightGBM lịch sử, không dùng với HGB
+data/steel/                     CSV UCI và processed trước đây
+reports/steel/duy_2026-10-02/    Run bàn giao mới: hình, bảng, CSV và model
+docs/team/                      Problem card, phân công, decision log, review
+tests/                          Kiểm thử dữ liệu/model/QA/evaluation/demo/monitoring
+```
+
+## 7. Nguồn tham khảo
+
+- [UCI Steel](https://archive.ics.uci.edu/dataset/851/steel+industry+energy+consumption): dữ liệu, metadata và giấy phép; số liệu audit/model là nhóm tính lại.
+- [Jay Lee — Industrial AI (2020)](https://doi.org/10.1007/978-981-15-2144-7): 3B, bối cảnh vận hành, kết nối AI với quyết định; đối chiếu chương/trang trong kế hoạch A–Z và hướng dẫn Duy.
+- [scikit-learn 1.8 — Common pitfalls](https://scikit-learn.org/1.8/common_pitfalls.html): leakage và fit preprocessing trên train.
+- [Lagged features for forecasting](https://scikit-learn.org/1.8/auto_examples/applications/plot_time_series_lagged_features.html): feature thời gian và temporal evaluation.
+- [Ridge](https://scikit-learn.org/1.8/modules/generated/sklearn.linear_model.Ridge.html), [HGB](https://scikit-learn.org/1.8/modules/generated/sklearn.ensemble.HistGradientBoostingRegressor.html), [RMSE API](https://scikit-learn.org/1.8/modules/generated/sklearn.metrics.root_mean_squared_error.html): lựa chọn và API theo phiên bản.
+
+Báo cáo tám chương, source+demo và slide vẫn là sản phẩm cuối theo rubric; trạng thái từng phần nằm trong bảng và kế hoạch. Word chọn hướng có sẵn là tài liệu thảo luận lịch sử, không phải báo cáo hoàn thiện của lần chạy này.

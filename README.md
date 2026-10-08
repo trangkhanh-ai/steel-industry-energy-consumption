@@ -14,18 +14,18 @@
 | Biết việc của ba người từ đầu đến khi nộp | [Kế hoạch A–Z](docs/team/ke_hoach_nhom_3_nguoi.md) |
 | Hiểu code, kết quả và tài liệu cần học | [Hướng dẫn phần Duy](docs/team/duy_implementation_and_learning.md) |
 | Đọc dữ liệu và xem hình từng bước | [Notebook 03 của Duy](notebooks/03_duy_steel_data_and_models.ipynb) |
-| Calibration/evaluation đúng model đã khóa | [Notebook 02 của Khánh](notebooks/02_steel_modeling_evaluation.ipynb), mặc định chưa chạy calibration/test |
+| Calibration/evaluation đúng model đã khóa | [Notebook 02 của Khánh](notebooks/02_steel_modeling_evaluation.ipynb), hiện cần sửa xung đột merge trước khi chạy |
 | Xem các lỗi đã sửa và việc còn thiếu | [Rà soát 02/10](docs/team/review_and_release_2026-10-02.md) |
 
 ## 2. Chạy trên máy cá nhân
 
-Mở terminal tại thư mục gốc repo. Môi trường đã chạy: **Python 3.14.3**; các gói được khóa trong `requirements.txt`. Máy mới cần Python 3.12+; kết quả khác phiên bản Python/hệ điều hành cần kiểm lại bằng các lệnh bên dưới. Model joblib yêu cầu **scikit-learn 1.8.0**.
+Mở terminal tại thư mục gốc repo. **Demo HGB dùng `requirements-demo.txt`**, đã kiểm trên máy Huy với Python 3.12.6; model Duy được tạo bằng Python 3.14.3 và yêu cầu **scikit-learn 1.8.0**. `requirements.txt` hiện dành cho luồng nghiên cứu LightGBM, có ràng buộc NumPy khác; dùng môi trường riêng, không cài đè vào môi trường demo.
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m unittest discover -s tests -v
-.venv\Scripts\python -m scripts.audit_features_and_leakage
+.venv\Scripts\python -m pip install -r requirements-demo.txt
+.venv\Scripts\python -m scripts.check_steel_demo_environment
+.venv\Scripts\python -m unittest tests.test_steel_modeling tests.test_steel_diagnostics tests.test_steel_inference tests.test_steel_monitoring tests.test_steel_demo tests.test_steel_policy tests.test_steel_demo_environment -v
 .venv\Scripts\python -m scripts.check_duy_handoff --run-dir reports/steel/duy_2026-10-02
 .venv\Scripts\python -m scripts.predict_duy_steel --run-dir reports/steel/duy_2026-10-02 --issue-time 2018-09-01T08:00:00
 ```
@@ -42,7 +42,7 @@ Linux/macOS dùng `.venv/bin/python`. Bản CSV UCI và model bàn giao đã có
 
 Script không ghi đè lần chạy trước. Có thể tải repo dạng ZIP; khi không có `.git`, metadata ghi commit là `null`.
 
-Notebook cần thêm `pip install -r requirements-notebooks.txt`, rồi chọn kernel `.venv`. Mở notebook từ repo hoặc thư mục `notebooks`. File `requirements-khanh.txt` dành cho thử nghiệm LightGBM riêng sau này; luồng chính hiện không cần LightGBM.
+Notebook/nghiên cứu: tạo môi trường riêng, cài `requirements-notebooks.txt` hoặc `requirements-khanh.txt` và chọn kernel tương ứng. Hai file này kéo theo `requirements.txt` của luồng nghiên cứu. Ngày 08/10 phát hiện notebook 02 trên bản merge `f6222c7` còn 8 khối xung đột Git; cần Duy/Khánh giải quyết trước khi dùng notebook đó để tái tạo calibration/test.
 
 ## Demo của nhóm đã tích hợp
 
@@ -72,6 +72,25 @@ Kiểm riêng bốn ca lỗi bằng Edge đã cài trên máy (thiếu model, sa
 ```
 
 Lệnh tự mở server QA tạm, không thay CSV/model gốc. Chọn thư mục kết quả mới; nhật ký/ảnh kiểm tra nằm ngoài phần được Git theo dõi. Trên máy Huy, môi trường tương thích đã cài là `.venv-huy-check`; thay `.venv` trong lệnh nếu dùng môi trường đó.
+
+## Tiếp nhận policy trên demo — 08/10/2026
+
+Demo đọc `notebooks/artifacts/policy.json` khi mở phiên. Bộ kiểm tra đọc JSON, version, schema, ngưỡng/buffer, quy tắc và hash artifact; đối chiếu với hash model thực sự đã nạp. Không thực thi chuỗi lệnh trong JSON, không áp dụng fallback hay buffer.
+
+- `missing`: chưa có file; `invalid`: cấu trúc/artifact chưa hợp lệ; `incompatible`: khác model hoặc schema; `model_unavailable`: chưa nạp được model để đối chiếu.
+- `verified_inactive`: cấu trúc và định danh khớp, **chưa xác nhận calibration hoặc bật cảnh báo**. Bản này luôn trả `alerts_enabled=false`.
+- Policy được chụp lại trong SQLite lúc mở phiên và gắn vào mỗi ghi nhận; mở lại database giữ kết quả cũ, mở phiên mới mới đọc file cập nhật.
+- Với bàn giao hiện tại: policy dành cho LightGBM, demo chạy HGB; đồng thời hash LightGBM trong policy khác artifact trong repo. UI hiển thị cả hai lý do. Không đổi hash/buffer chỉ để vượt kiểm tra.
+
+Kiểm môi trường mặc định dùng `requirements-demo.txt`. Để kiểm riêng môi trường nghiên cứu, chạy `python -m scripts.check_steel_demo_environment --requirements requirements.txt`; các điều kiện `>=`, `<`, `<=`, `==` và file `-r` đều được kiểm, thiếu/sai gói trả mã lỗi 1. Kết quả READY chỉ xác nhận luồng replay, không xác nhận cảnh báo.
+
+Checklist trước khi nối cảnh báo:
+
+- [ ] Duy chốt model cuối và bàn giao artifact, feature implementation cùng lệnh inference.
+- [ ] Khánh bàn giao policy khớp model, số liệu calibration đủ độ chính xác và cách tái tạo.
+- [ ] Nhóm chốt điều kiện fallback, giới hạn cảm biến, thuật toán ghép episode và trigger giám sát.
+- [ ] Duy/Khánh sửa notebook merge và thống nhất số liệu Notion với artifact.
+- [ ] Huy mới triển khai cảnh báo và kiểm chéo các ca thật; không tự đổi model hoặc hiệu chỉnh lại trên test.
 
 ## 3. Dữ liệu và tiền xử lý
 

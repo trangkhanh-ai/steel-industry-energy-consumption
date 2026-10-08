@@ -3,3 +3,5 @@
 .decisionpanel{margin-top:18px;padding:22px}.decisionpanel label{display:block;margin:12px 0 7px;font-size:12px;font-weight:600}.decisionpanel textarea{width:100%;padding:10px;border:1px solid #cbd5d8;border-radius:6px;font:inherit;resize:vertical}.decisionbuttons{margin-top:12px;flex-wrap:wrap}.decisionbuttons button{flex:1 1 140px}#decisions{padding-left:20px;overflow-wrap:anywhere}#decisions li{margin:12px 0;white-space:pre-wrap}#decisionFeedback{min-height:18px}@media(max-width:760px){.decisionpanel{padding:16px}}
 
 #modelInfo{margin:12px 0}#modelInfo dt{color:var(--muted);margin-top:10px;font-size:11px}#modelInfo dd{margin:3px 0;overflow-wrap:anywhere;font-size:12px}#modelHash{font-family:Consolas,monospace;font-size:10px}
+
+#policyIssues{padding-left:16px;font-size:11px;line-height:1.6}#policyIssues li{margin:6px 0}#policyVersion{display:block;overflow-wrap:anywhere;font-size:10px}

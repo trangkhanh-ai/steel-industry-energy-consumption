@@ -11,6 +11,7 @@ import pandas as pd
 
 from .monitoring import ForecastMonitor, valid_time
 from .inference import DEFAULT_MODEL_SUBDIR
+from .policy import DEFAULT_POLICY
 from .preprocessing import load_official_raw
 
 
@@ -39,8 +40,9 @@ class ReplayDemo:
     LAST_ORIGIN = pd.Timestamp("2018-09-30 22:45")
     END = pd.Timestamp("2018-09-30 23:45")
 
-    def __init__(self, root, model_dir=None, sessions_dir=None):
+    def __init__(self, root, model_dir=None, sessions_dir=None, policy_path=DEFAULT_POLICY):
         self.root = Path(root)
+        self.policy_path = Path(policy_path)
         self.model_dir = Path(model_dir) if model_dir else self.root / DEFAULT_MODEL_SUBDIR
         self.sessions_dir = Path(sessions_dir) if sessions_dir else self.root / "reports/steel/modeling/demo_sessions"
         raw, self.audit = load_official_raw(self.root / "data/steel/raw/Steel_industry_data.csv")
@@ -74,7 +76,7 @@ class ReplayDemo:
                 raise ValueError("Chọn mốc 15 phút từ 01/09 00:00 đến 30/09/2018 22:45.")
             self.close()
             self.session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "_" + uuid4().hex[:10]
-            self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3")
+            self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3", self.policy_path)
             self.current, self.timings = t, []
             self._tick()
         elif action == "step":
@@ -117,9 +119,10 @@ class ReplayDemo:
                 "end": self.END.isoformat(), "finished": self.current == self.END,
                 "alert_policy": "not_configured", "source": "UCI Steel · dữ liệu đo năm 2018",
                 "history": [], "forecasts": [], "errors": [], "metrics": None, "current_forecast": None,
-                "decisions": [], "model_info": None}
+                "decisions": [], "model_info": None, "policy_info": None}
         if self.monitor is None:
             return base
+        base["policy_info"] = self.monitor.policy_info
         if self.monitor.model is not None:
             base["model_info"] = self.monitor.model.display_metadata()
         observed = self.history.loc[self.history.observation_time.le(self.current)].tail(96)

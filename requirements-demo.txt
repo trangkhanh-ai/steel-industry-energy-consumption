@@ -1,0 +1,9 @@
+# HGB replay environment verified on Huy's machine; independent of LightGBM research.
+numpy==2.4.4
+pandas==2.3.3
+scipy==1.18.1
+scikit-learn==1.8.0
+joblib==1.5.3
+threadpoolctl==3.7.0
+matplotlib==3.10.8
+packaging==26.3

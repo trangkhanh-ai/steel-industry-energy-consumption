@@ -5,6 +5,7 @@ const decisionLabels = {acknowledge:'Đã xem', inspect:'Đề nghị kiểm tra
 const nf = new Intl.NumberFormat('vi-VN', {maximumFractionDigits: 2, minimumFractionDigits: 2});
 const number = value => value == null ? '—' : nf.format(value);
 const timestamp = value => value ? `${value.slice(8,10)}/${value.slice(5,7)} ${value.slice(11,16)}` : '—';
+const policyLabels = {missing:'Chưa có file policy', invalid:'Policy chưa hợp lệ', incompatible:'Policy khác model đang chạy', model_unavailable:'Chưa đối chiếu được model', verified_inactive:'Đã khớp định danh · chưa bật'};
 const statuses = {forecast_ready:'Dữ liệu hợp lệ',invalid_history:'Lỗi lịch sử đầu vào',model_unavailable:'Không có model',prediction_failed:'Không thể dự báo',forecast_conflict:'Dự báo chưa thống nhất'};
 function controls(){
   $('reset').disabled = busy; $('start').disabled = busy;
@@ -36,6 +37,13 @@ function render(data){
   current=data; $('clock').textContent=data.clock?`${timestamp(data.clock)} / 2018`:'Chưa mở phiên';
   $('sessionNote').textContent=data.session?'Đồng hồ dữ liệu · mỗi bước 15 phút':'Chọn một thời điểm để bắt đầu.';
   const response=data.current_forecast, forecast=response?.prediction;
+  const policy=data.policy_info;
+  $('policyStatus').textContent=policy?policyLabels[policy.status]||'Policy chưa được hỗ trợ':'Chưa kiểm tra policy';
+  $('policySummary').textContent=policy?'Kết quả kiểm tra tại lúc mở phiên. Mở phiên mới để nhận file đã cập nhật.':'Mở phiên để kiểm tra bản bàn giao cảnh báo.';
+  $('policyVersion').textContent=policy?.version?`Bản ${policy.version} · ${policy.target_model}`:'';
+  $('policyIssues').replaceChildren();
+  for(const issue of policy?.issues||[]){const li=document.createElement('li');li.textContent=issue.detail;$('policyIssues').append(li);}
+  if(policy?.status==='verified_inactive') $('policySummary').textContent='Cấu trúc và định danh đã khớp; chưa nghiệm thu calibration, fallback hoặc kích hoạt cảnh báo.';
   const model=data.model_info;
   $('modelInfo').hidden=!model;
   $('modelState').textContent=model?'Định danh và chỉ số từ model được nạp.':data.session?'Không nạp được mô hình. Cần kiểm tra bản bàn giao.':'Mở phiên để xem mô hình được nạp.';
@@ -59,7 +67,7 @@ function render(data){
   $('decisions').replaceChildren();
   for(const d of data.decisions){
     const li=document.createElement('li');
-    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · Dự báo: ${number(d.context.predicted_kWh)} kWh · Chưa có policy cảnh báo`;
+    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · Dự báo: ${number(d.context.predicted_kWh)} kWh · Policy lúc ghi: ${policyLabels[d.context.policy_inspection?.status]||'Chưa kiểm tra'} · Cảnh báo chưa bật`;
     $('decisions').append(li);
   }
   if(!data.decisions.length){const li=document.createElement('li');li.textContent='Chưa có ghi nhận trong phiên.';$('decisions').append(li);}

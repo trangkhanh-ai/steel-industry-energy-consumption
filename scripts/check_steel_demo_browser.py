@@ -39,6 +39,10 @@ def run(url, output):
             assert all(row["actual"] is None for row in state["forecasts"] if row["forecast_end"] > state["clock"])
 
         initial = start("2018-09-01T08:00")
+        assert initial["policy_info"]["status"] == "incompatible"
+        assert not initial["policy_info"]["alerts_enabled"]
+        expect(page.locator("#policyStatus")).to_have_text("Policy khác model đang chạy")
+        expect(page.locator("#policyIssues")).to_contain_text("SHA-256")
         assert initial["forecasts"][0]["actual"] is None
         page.locator("#modelDetails").evaluate("el => el.open = true")
         expect(page.locator("#modelName")).to_have_text(initial["model_info"]["name"])
@@ -57,6 +61,7 @@ def run(url, output):
         assert len(recorded["decisions"]) == 1
         assert recorded["decisions"][0]["note"] == note
         assert recorded["decisions"][0]["context"]["alert_policy"] == "not_configured"
+        assert recorded["decisions"][0]["context"]["policy_inspection"] == initial["policy_info"]
         assert page.locator("#decisions b").count() == 0
         page.locator("#decisionNote").fill("Bỏ qua quan sát trong bài kiểm tra giao diện; không kết luận tải an toàn.")
         page.locator("#dismiss").click()
@@ -145,6 +150,7 @@ def run(url, output):
         assert not errors, errors
         summary = {"checks": "loaded-model metadata and validation MAE; real-data navigation, delayed actuals, midnight, play/pause, isolated reset, month end, mobile overflow, invalid-date and foreign-origin rejection; decision required fields, acknowledge/inspect/dismiss, escaped text and persistence on reload",
                    "model_info": initial["model_info"],
+                   "policy_info": initial["policy_info"],
                    "decision_guards": "stale clock/session rejected through UI; identical HTTP retry stored once; changed retry content rejected",
                    "browser": browser.version, "javascript_errors": errors, "measured_step_requests": len(measurements),
                    "request_to_render_p50_ms": float(np.median([r["request_to_render_ms"] for r in measurements])),

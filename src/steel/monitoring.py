@@ -16,6 +16,7 @@ import pandas as pd
 
 from .inference import SteelForecaster, features_at_issue
 from .preprocessing import FREQUENCY
+from .policy import DEFAULT_POLICY, inspect_policy
 
 
 def valid_time(value):
@@ -26,7 +27,7 @@ def valid_time(value):
 
 
 class ForecastMonitor:
-    def __init__(self, model_dir: Path, database: Path):
+    def __init__(self, model_dir: Path, database: Path, policy_path=DEFAULT_POLICY):
         database = Path(database)
         database.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(database)
@@ -53,6 +54,9 @@ class ForecastMonitor:
                 operator TEXT NOT NULL, action TEXT NOT NULL,
                 note TEXT NOT NULL, context_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS session_metadata (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL
+            );
         """)
         self.model = None
         self.model_error = None
@@ -61,6 +65,15 @@ class ForecastMonitor:
         except (OSError, ValueError, KeyError, TypeError, AttributeError, EOFError) as error:
             self.model_error = f"{type(error).__name__}: {error}"
             self._log(None, "model_unavailable", self.model_error, 0, None)
+        saved = self.db.execute("SELECT value FROM session_metadata WHERE key='policy_inspection'").fetchone()
+        if saved is None:
+            self.policy_info = inspect_policy(policy_path, self.model)
+            self.db.execute("INSERT INTO session_metadata(key,value) VALUES('policy_inspection',?)",
+                            (json.dumps(self.policy_info, ensure_ascii=False, allow_nan=False),))
+            self.db.commit()
+        else:
+            # Preserve the handoff observed by this session, including after reopen.
+            self.policy_info = json.loads(saved["value"])
 
     def close(self):
         self.db.close()
@@ -104,6 +117,7 @@ class ForecastMonitor:
                    "predicted_kWh", "model_sha256", "model_configuration")}
         # This monitor has no calibrated alert policy. Never label these as alert decisions.
         context["alert_policy"] = "not_configured"
+        context["policy_inspection"] = self.policy_info
         context_json = json.dumps(context, ensure_ascii=False, allow_nan=False, sort_keys=True)
         values = (request_id, now, operator, action, note, context_json)
         previous = self.db.execute("SELECT * FROM decisions WHERE token=?", (token,)).fetchone()

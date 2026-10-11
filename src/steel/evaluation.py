@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     confusion_matrix, mean_absolute_error, precision_recall_fscore_support,
-    root_mean_squared_error,
+    root_mean_squared_error, roc_auc_score,
 )
 
 
@@ -69,11 +69,18 @@ def evaluate_alerts(actual, predicted, times, threshold, buffer):
     return {
         "mae_kWh": float(mean_absolute_error(actual, predicted)),
         "rmse_kWh": float(root_mean_squared_error(actual, predicted)),
+        "bias_kWh": float(np.mean(predicted - actual)),
+        "peak_rows": int(true_flags.sum()),
+        "peak_mae_kWh": float(mean_absolute_error(actual[true_flags], predicted[true_flags])) if true_flags.any() else None,
+        "peak_mean_underprediction_kWh": float(np.maximum(actual[true_flags] - predicted[true_flags], 0).mean()) if true_flags.any() else None,
         "rows": len(actual), "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+        "alert_rows": int(alerts.sum()),
         "precision": float(precision), "recall": float(recall), "f1": float(f1),
         "false_positive_rate": float(fp / (fp + tn)) if fp + tn else None,
         "false_discovery_rate": float(fp / (fp + tp)) if fp + tp else None,
         "empirical_upper_coverage": float(np.mean(actual <= upper)),
+        # Điểm xếp hạng là predicted + buffer, KHÔNG phải xác suất vượt ngưỡng.
+        "roc_auc_ranking": float(roc_auc_score(true_flags, upper)) if np.unique(true_flags).size == 2 else None,
         "true_origin_episodes": len(true_episodes), "alert_origin_episodes": len(alert_episodes),
         "detected_true_episodes": detected, "valid_alert_episodes": valid,
         "overlap_episode_recall": detected / len(true_episodes) if true_episodes else None,
@@ -81,3 +88,15 @@ def evaluate_alerts(actual, predicted, times, threshold, buffer):
         "lead_time_measured": False, "savings_measured": False,
         "episode_note": "Many-to-many overlap at forecast origins; not physical load events or 60-minute lead-time proof",
     }
+
+
+def inspection_cost(metrics, false_alarm_cost, missed_high_cost):
+    """Chi phí giả định theo forecast origin; không phải tiền điện tiết kiệm.
+
+    Các cửa sổ dự báo chồng lấp: một sự kiện vật lý có thể xuất hiện trong
+    nhiều hàng. Vì thế đơn vị chi phí là điểm mô phỏng trên hàng, không USD/VND.
+    """
+    costs = np.asarray([false_alarm_cost, missed_high_cost], dtype=float)
+    if not np.isfinite(costs).all() or (costs < 0).any():
+        raise ValueError("Chi phí kịch bản phải hữu hạn và không âm")
+    return float(metrics["fp"] * false_alarm_cost + metrics["fn"] * missed_high_cost)

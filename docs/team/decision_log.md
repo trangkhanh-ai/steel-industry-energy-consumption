@@ -28,3 +28,11 @@ Lần đầu `duy_2026-10-01` tạo đủ artifact nhưng lỗi in đường d�
 - Chưa gắn policy của LightGBM vào HGB; cần nhóm duyệt protocol/model/policy trước tích hợp dashboard. Các đề xuất thay đổi nghiệp vụ vẫn chờ nhóm chốt.
 
 - Trong lúc tích hợp đã nhận commit GitHub mới `12eed4b`: giữ nguyên source nhóm và nối demo/monitoring với artifact Duy qua adapter, không đổi model hoặc tái tuning. Hai xung đột README/requirements được giải quyết có lưu README upstream tham chiếu.
+
+
+## 11/10/2026 — bản source tích hợp
+
+- Duy cho phép kiểm/sửa/publish source, README và hướng dẫn; không publish Word/PDF hoặc bài báo.
+- Train lại trên môi trường sạch khớp model hash, metric và predictions; timing thay đổi theo lần chạy.
+- Giữ credit Khánh/Huy; study Gate 7 và artifact LightGBM 15 feature tách khỏi demo HGB.
+- [Kết quả hiện tại](../results.md); các note ngày trước phản ánh lịch sử.

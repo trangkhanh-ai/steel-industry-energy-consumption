@@ -5,14 +5,13 @@ const decisionLabels = {acknowledge:'Đã xem', inspect:'Đề nghị kiểm tra
 const nf = new Intl.NumberFormat('vi-VN', {maximumFractionDigits: 2, minimumFractionDigits: 2});
 const number = value => value == null ? '—' : nf.format(value);
 const timestamp = value => value ? `${value.slice(8,10)}/${value.slice(5,7)} ${value.slice(11,16)}` : '—';
-const policyLabels = {missing:'Chưa có file policy', invalid:'Policy chưa hợp lệ', incompatible:'Policy khác model đang chạy', model_unavailable:'Chưa đối chiếu được model', verified_inactive:'Đã khớp định danh · chưa bật'};
 const statuses = {forecast_ready:'Dữ liệu hợp lệ',invalid_history:'Lỗi lịch sử đầu vào',model_unavailable:'Không có model',prediction_failed:'Không thể dự báo',forecast_conflict:'Dự báo chưa thống nhất'};
 function controls(){
   $('reset').disabled = busy; $('start').disabled = busy;
   $('step').disabled = busy || playing || !current?.session || current.finished;
   $('play').disabled = (!playing && busy) || !current?.session || current.finished;
   $('play').textContent = playing ? 'Ⅱ Dừng' : '▶ Chạy';
-  $('playState').textContent = current?.finished ? 'Đã đi hết dữ liệu tháng 9.' : (playing ? 'Đang phát lại từng bước 15 phút' : 'Đang dừng');
+  $('playState').textContent = current?.finished ? 'Đã đi hết dữ liệu phiên.' : (playing ? 'Đang phát lại từng bước 15 phút' : 'Đang dừng');
   const canDecide = !busy && !playing && !!current?.current_forecast;
   for(const id of ['operator','decisionNote','inspect','dismiss']) $(id).disabled = !canDecide;
   $('acknowledge').disabled = !canDecide || current.current_forecast.status !== 'forecast_ready';
@@ -35,25 +34,21 @@ function render(data){
     $('decisionNote').value=''; $('decisionFeedback').textContent=''; decisionToken=null;
   }
   current=data; $('clock').textContent=data.clock?`${timestamp(data.clock)} / 2018`:'Chưa mở phiên';
+  $('start').min=data.first_start.slice(0,16); $('start').max=data.last_start.slice(0,16);
+  if($('start').value < $('start').min || $('start').value > $('start').max) $('start').value=$('start').min;
+  $('periodNote').textContent=`Phát lại từ ${timestamp(data.first_start)} đến ${timestamp(data.end)} / 2018. Actual chỉ xuất hiện sau đủ 60 phút và đủ bốn bản đo.`;
   $('sessionNote').textContent=data.session?'Đồng hồ dữ liệu · mỗi bước 15 phút':'Chọn một thời điểm để bắt đầu.';
   const response=data.current_forecast, forecast=response?.prediction;
-  const policy=data.policy_info;
-  $('policyStatus').textContent=policy?policyLabels[policy.status]||'Policy chưa được hỗ trợ':'Chưa kiểm tra policy';
-  $('policySummary').textContent=policy?'Kết quả kiểm tra tại lúc mở phiên. Mở phiên mới để nhận file đã cập nhật.':'Mở phiên để kiểm tra bản bàn giao cảnh báo.';
-  $('policyVersion').textContent=policy?.version?`Bản ${policy.version} · ${policy.target_model}`:'';
-  $('policyIssues').replaceChildren();
-  for(const issue of policy?.issues||[]){const li=document.createElement('li');li.textContent=issue.detail;$('policyIssues').append(li);}
-  if(policy?.status==='verified_inactive') $('policySummary').textContent='Cấu trúc và định danh đã khớp; chưa nghiệm thu calibration, fallback hoặc kích hoạt cảnh báo.';
-  const model=data.model_info;
-  $('modelInfo').hidden=!model;
-  $('modelState').textContent=model?'Định danh và chỉ số từ model được nạp.':data.session?'Không nạp được mô hình. Cần kiểm tra bản bàn giao.':'Mở phiên để xem mô hình được nạp.';
-  for(const [id,value] of Object.entries({modelName:model?.name,modelRun:model?.run,
-    modelFeatures:model?.feature_implementation,modelHash:model?.model_sha256})) $(id).textContent=value||'—';
-  $('modelMae').textContent=number(model?.validation_mae_kWh);
-  $('modelRmse').textContent=number(model?.validation_rmse_kWh);
   $('prediction').textContent=forecast?`${number(forecast.predicted_next_60m_kWh)} kWh`:'—';
   $('horizon').textContent=forecast?`${timestamp(forecast.forecast_start)} → ${timestamp(forecast.forecast_end)}`:data.finished?'Đã kết thúc phiên dữ liệu':response?.detail?'Chưa có dự báo hợp lệ':'Chưa có dự báo';
   $('quality').textContent=data.finished?'Hoàn tất phát lại':response?statuses[response.status]||response.status:'Chưa có phiên';
+  const policy=data.policy_info, decision=response?.decision;
+  $('alertHeading').textContent=data.alert_policy==='configured'?'Policy nghiên cứu đã hiệu chỉnh':data.alert_policy==='policy_unavailable'?'Policy không hợp lệ':'Chưa có policy cảnh báo';
+  $('alertDescription').textContent=policy?.threshold_kWh!=null?`Ngưỡng ${number(policy.threshold_kWh)} kWh · Đệm ${number(policy.upper_buffer_kWh)} kWh. Có hiệu lực từ ${timestamp(policy.valid_from)}. Đây không phải giới hạn công suất hợp đồng.`:policy?.detail||'Chỉ dự báo; chưa kết luận vượt ngưỡng hoặc tải an toàn.';
+  $('alertStatus').textContent=decision?.alert===true?'Đề nghị kiểm tra khoảng tiêu thụ cao':decision?.alert===false?'Dưới ngưỡng nghiên cứu':'Chưa có cảnh báo hợp lệ';
+  $('recommendation').textContent=decision?.recommendation||'Mở phiên để xem dự báo và khuyến nghị. Người phụ trách xác nhận; không gửi lệnh tới máy.';
+  const info=data.model_info;
+  $('modelInfo').textContent=info?`${info.model_name} · ${info.run_directory}\nMAE validation: ${number(info.validation_mae_kWh)} kWh; RMSE: ${number(info.validation_rmse_kWh)} kWh.\nFeature: ${info.feature_implementation}\nSHA-256: ${info.model_sha256}`:'Thông tin sẽ lấy từ model nạp hợp lệ khi mở phiên; không dùng điểm của model cũ.';
   const m=data.metrics?.models?.[0];
   $('mae').textContent=m?.all_matured.rows?`${number(m.all_matured.mae_kWh)} kWh`:'—';
   $('scored').textContent=m?`${m.all_matured.rows} dự báo đã có đủ số đo thực tế`:'Chưa có kết quả đối chiếu';
@@ -63,18 +58,23 @@ function render(data){
   $('rollingCount').textContent=m?m.last_24h_by_forecast_end.rows:'—';
   const quality=data.metrics?.input_quality;
   $('invalidRate').textContent=quality?.forecast_attempts?`${quality.invalid_history_attempts}/${quality.forecast_attempts} (${number(100*quality.invalid_history_rate)}%)`:'—';
+  const usageWatch=response?.usage_watch, performanceWatch=data.metrics?.performance_watch;
+  $('reviewStatus').textContent=performanceWatch?.status==='needs_review' || usageWatch?.status==='needs_review'?'Cần rà soát dữ liệu và hiệu năng':'Chưa có tín hiệu rà soát / chưa đủ nhãn';
+  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Nhãn đủ cho kiểm hai tuần: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344}. Các ngưỡng là heuristic, không chẩn đoán drift hoặc tự retrain.`;
   $('decisionContext').textContent=response?`Quan sát lúc ${timestamp(data.clock)} · ${statuses[response.status]||response.status}. Dừng phát lại trước khi ghi nhận.`:'Không có quan sát hiện tại để ghi nhận.';
   $('decisions').replaceChildren();
   for(const d of data.decisions){
     const li=document.createElement('li');
-    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · Dự báo: ${number(d.context.predicted_kWh)} kWh · Policy lúc ghi: ${policyLabels[d.context.policy_inspection?.status]||'Chưa kiểm tra'} · Cảnh báo chưa bật`;
+    const saved=d.context.decision;
+    const savedAlert=saved?.alert===true?'Đề nghị kiểm tra':saved?.alert===false?'Dưới ngưỡng nghiên cứu':'Không có cảnh báo hợp lệ';
+    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · Dự báo: ${number(d.context.predicted_kWh)} kWh · ${savedAlert}`;
     $('decisions').append(li);
   }
   if(!data.decisions.length){const li=document.createElement('li');li.textContent='Chưa có ghi nhận trong phiên.';$('decisions').append(li);}
   chart(data.history);
   $('rows').replaceChildren();
-  for(const r of data.forecasts){const tr=document.createElement('tr');for(const v of [timestamp(r.issue_time),timestamp(r.forecast_end),number(r.prediction),number(r.actual),number(r.error),r.label_status==='waiting_for_observations'?'Đã đủ giờ · thiếu bản đo':r.actual==null?'Chờ đủ 60 phút':'Đã đối chiếu']){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.lastChild.className=r.actual==null?'waiting':'available';$('rows').append(tr);}
-  if(!data.forecasts.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent='Chưa có dự báo. Mở phiên hoặc kiểm tra trạng thái xử lý.';tr.append(td);$('rows').append(tr);}
+  for(const r of data.forecasts){const tr=document.createElement('tr');const label=r.label_status==='waiting_for_observations'?'Đã đủ giờ · thiếu bản đo':r.actual==null?'Chờ đủ 60 phút':'Đã đối chiếu';for(const v of [timestamp(r.issue_time),timestamp(r.forecast_end),number(r.prediction),number(r.actual),number(r.error),r.decision?.alert===true?'Kiểm tra':r.decision?.alert===false?'Dưới ngưỡng':'—',label]){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.lastChild.className=r.actual==null?'waiting':'available';$('rows').append(tr);}
+  if(!data.forecasts.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent='Chưa có dự báo. Mở phiên hoặc kiểm tra trạng thái xử lý.';tr.append(td);$('rows').append(tr);}
   const p=data.performance;
   $('ram').textContent=p?.process_rss_bytes!=null?`${number(p.process_rss_bytes/1048576)} MB`:'—';
   $('cpu').textContent=p?`${number(p.process_cpu_ms)} ms`:'—';$('backend').textContent=p?`${number(p.backend_ms)} ms`:'—';

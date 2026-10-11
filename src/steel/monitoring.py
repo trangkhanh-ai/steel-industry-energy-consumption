@@ -1,7 +1,7 @@
 """Local persistent forecast/error log and delayed scoring from real observations.
 
 SQLite is a local sequential-demo store, not a production ingestion service.
-No alert policy, synthetic observations, imputation or automatic retraining.
+Optional research policy; no synthetic observations or automatic equipment actions.
 """
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ import pandas as pd
 
 from .inference import SteelForecaster, features_at_issue
 from .preprocessing import FREQUENCY
-from .policy import DEFAULT_POLICY, inspect_policy
+from .policy import AlertPolicy, performance_watch, DEFAULT_POLICY, inspect_policy
+from .evaluation import evaluate_alerts
 
 
 def valid_time(value):
@@ -27,7 +28,7 @@ def valid_time(value):
 
 
 class ForecastMonitor:
-    def __init__(self, model_dir: Path, database: Path, policy_path=DEFAULT_POLICY):
+    def __init__(self, model_dir: Path, database: Path, policy_path=None):
         database = Path(database)
         database.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(database)
@@ -54,11 +55,13 @@ class ForecastMonitor:
                 operator TEXT NOT NULL, action TEXT NOT NULL,
                 note TEXT NOT NULL, context_json TEXT NOT NULL
             );
-            CREATE TABLE IF NOT EXISTS session_metadata (
-                key TEXT PRIMARY KEY, value TEXT NOT NULL
-            );
         """)
+        self.db.execute("CREATE TABLE IF NOT EXISTS session_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         self.model = None
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(forecasts)")}
+        if "decision_json" not in columns:
+            self.db.execute("ALTER TABLE forecasts ADD COLUMN decision_json TEXT")
+        self.policy, self.policy_error = None, None
         self.model_error = None
         try:
             self.model = SteelForecaster(model_dir)
@@ -67,13 +70,31 @@ class ForecastMonitor:
             self._log(None, "model_unavailable", self.model_error, 0, None)
         saved = self.db.execute("SELECT value FROM session_metadata WHERE key='policy_inspection'").fetchone()
         if saved is None:
-            self.policy_info = inspect_policy(policy_path, self.model)
+            # Historical LightGBM handoff is inspected separately; it never enables alerts.
+            handoff_path = DEFAULT_POLICY
+            if policy_path is not None:
+                try:
+                    candidate = json.loads(Path(policy_path).read_text(encoding="utf-8-sig"))
+                    if not isinstance(candidate, dict) or "policy_metadata" in candidate:
+                        handoff_path = policy_path
+                except (OSError, ValueError):
+                    handoff_path = policy_path
+            self.policy_info = inspect_policy(handoff_path, self.model)
             self.db.execute("INSERT INTO session_metadata(key,value) VALUES('policy_inspection',?)",
                             (json.dumps(self.policy_info, ensure_ascii=False, allow_nan=False),))
             self.db.commit()
         else:
-            # Preserve the handoff observed by this session, including after reopen.
             self.policy_info = json.loads(saved["value"])
+        if policy_path is not None and self.model is not None:
+            try:
+                if self.model.duy_forecaster is None:
+                    raise ValueError("Policy yêu cầu artifact Duy có model_handoff.json")
+                self.policy = AlertPolicy(policy_path, self.model.duy_forecaster.manifest)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                self.policy_error = str(error)
+                self._log(None, "policy_unavailable", self.policy_error, 0, None)
+        elif policy_path is not None:
+            self.policy_error = "Không thể dùng policy khi model chưa được nạp hợp lệ"
 
     def close(self):
         self.db.close()
@@ -107,7 +128,7 @@ class ForecastMonitor:
             raise ValueError("Chỉ ghi nhận đã xem, đề nghị kiểm tra hoặc bỏ qua.")
         operator, note = operator.strip(), note.strip()
         row = self.db.execute("""SELECT r.*, f.predicted_kWh, f.model_sha256,
-            f.model_configuration FROM requests r LEFT JOIN forecasts f ON f.id=r.forecast_id
+            f.model_configuration, f.decision_json FROM requests r LEFT JOIN forecasts f ON f.id=r.forecast_id
             WHERE r.id=?""", (request_id,)).fetchone()
         if row is None or row["issue_time"] != now:
             raise ValueError("Chỉ ghi quyết định cho quan sát tại thời điểm đang phát lại.")
@@ -115,8 +136,8 @@ class ForecastMonitor:
             raise ValueError("Không xác nhận dự báo khi dữ liệu hoặc mô hình đang lỗi; hãy đề nghị kiểm tra.")
         context = {key: row[key] for key in ("issue_time", "status", "detail", "forecast_id",
                    "predicted_kWh", "model_sha256", "model_configuration")}
-        # This monitor has no calibrated alert policy. Never label these as alert decisions.
-        context["alert_policy"] = "not_configured"
+        context["decision"] = json.loads(row["decision_json"]) if row["decision_json"] else None
+        context["alert_policy"] = "configured" if context["decision"] and context["decision"].get("policy_sha256") else "not_configured"
         context["policy_inspection"] = self.policy_info
         context_json = json.dumps(context, ensure_ascii=False, allow_nan=False, sort_keys=True)
         values = (request_id, now, operator, action, note, context_json)
@@ -140,16 +161,16 @@ class ForecastMonitor:
 
     def forecast(self, history: pd.DataFrame, issue_time) -> dict:
         start = perf_counter()
-        issue = str(issue_time)
+        try:
+            issue = valid_time(issue_time).isoformat()
+        except (ValueError, TypeError):
+            issue = None
         status, detail, forecast_id, prediction = "invalid_history", None, None, None
+        decision = {"status": "not_configured", "alert": None,
+                    "recommendation": "Chỉ dự báo; chưa có policy cảnh báo."}
+        usage_watch = None
         if self.model is None:
             status, detail = "model_unavailable", self.model_error
-            # Use the same timestamp format as replay decisions and metric filters,
-            # even when no model can be loaded. str(Timestamp) uses a space.
-            try:
-                issue = valid_time(issue_time).isoformat()
-            except (ValueError, TypeError):
-                pass
         else:
             try:
                 t = valid_time(issue_time)
@@ -164,22 +185,36 @@ class ForecastMonitor:
                 except (ValueError, TypeError, RuntimeError, OSError) as error:
                     status, detail = "prediction_failed", str(error)
                 else:
+                    if self.policy_error:
+                        decision = {"status": "policy_unavailable", "alert": None, "detail": self.policy_error,
+                                    "recommendation": "Kiểm phiên bản policy; không suy ra an toàn từ dự báo thấp."}
+                    elif self.policy is not None:
+                        try:
+                            decision = self.policy.apply(prediction["predicted_next_60m_kWh"], t)
+                            usage_watch = self.policy.usage_watch(history.Usage_kWh)
+                        except (ValueError, KeyError, TypeError) as error:
+                            decision = {"status": "policy_unavailable", "alert": None, "detail": str(error),
+                                        "recommendation": "Kiểm policy và thời điểm calibration."}
+                    decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True, allow_nan=False)
                     self.db.execute("""INSERT OR IGNORE INTO forecasts
-                        (issue_time,forecast_start,forecast_end,predicted_kWh,model_sha256,model_configuration)
-                        VALUES(?,?,?,?,?,?)""", (issue, prediction["forecast_start"], prediction["forecast_end"],
-                        prediction["predicted_next_60m_kWh"], prediction["model_sha256"], prediction["model_configuration"]))
-                    saved = self.db.execute("SELECT id,predicted_kWh FROM forecasts WHERE issue_time=? AND model_sha256=?",
+                        (issue_time,forecast_start,forecast_end,predicted_kWh,model_sha256,model_configuration,decision_json)
+                        VALUES(?,?,?,?,?,?,?)""", (issue, prediction["forecast_start"], prediction["forecast_end"],
+                        prediction["predicted_next_60m_kWh"], prediction["model_sha256"], prediction["model_configuration"], decision_json))
+                    saved = self.db.execute("SELECT id,predicted_kWh,decision_json FROM forecasts WHERE issue_time=? AND model_sha256=?",
                                             (issue, prediction["model_sha256"])).fetchone()
                     forecast_id = saved["id"]
-                    if saved["predicted_kWh"] != prediction["predicted_next_60m_kWh"]:
+                    if (saved["predicted_kWh"] != prediction["predicted_next_60m_kWh"]
+                            or saved["decision_json"] != decision_json):
                         # Never replace a forecast after its outcome could be known.
                         status, detail, prediction = "forecast_conflict", "Different prediction already stored for this timestamp/model", None
                     else:
                         status = "forecast_ready"
         elapsed = 1000*(perf_counter()-start)
         request_id = self._log(issue, status, detail, elapsed, forecast_id)
+        if status != "forecast_ready":
+            decision = {"status": "unavailable", "alert": None, "recommendation": "Kiểm dữ liệu/model trước khi sử dụng."}
         return {"status": status, "detail": detail, "forecast_id": forecast_id, "request_id": request_id,
-                "prediction": prediction, "request_ms": elapsed}
+                "prediction": prediction, "decision": decision, "usage_watch": usage_watch, "request_ms": elapsed}
 
     def observe(self, history: pd.DataFrame, as_of) -> dict:
         try:
@@ -229,6 +264,10 @@ class ForecastMonitor:
         result = {"as_of": now.isoformat(), "forecasts": len(frame), "models": [],
                   "request_counts_all_logged": dict(self.db.execute("SELECT status,COUNT(*) FROM requests GROUP BY status").fetchall()),
                   "policy": "monitoring_only_no_threshold_or_automatic_action"}
+        if self.policy is not None:
+            result["policy"] = self.policy.information()
+        if self.policy_error:
+            result["policy_error"] = self.policy_error
         counts = dict(self.db.execute("""SELECT status,COUNT(*) FROM requests
             WHERE issue_time<=? AND status IN
             ('forecast_ready','invalid_history','model_unavailable','prediction_failed','forecast_conflict')
@@ -250,4 +289,10 @@ class ForecastMonitor:
                 return {"rows": len(rows), "mae_kWh": float(error.abs().mean()), "bias_kWh": float(error.mean())}
             result["models"].append({"model_sha256": sha, "model_configuration": all_rows.model_configuration.iloc[0],
                                      "pending": len(all_rows)-len(part), "all_matured": errors(part), "last_24h_by_forecast_end": errors(recent)})
+            if self.policy is not None and sha == self.policy.data["model_sha256"]:
+                same_policy = part.decision_json.map(lambda value: bool(value) and json.loads(value).get("policy_sha256") == self.policy.sha256)
+                eligible = part.loc[same_policy]
+                result["performance_watch"] = performance_watch(eligible, self.policy.reference_mae)
+                result["alert_metrics"] = evaluate_alerts(eligible.actual_kWh, eligible.predicted_kWh,
+                    pd.to_datetime(eligible.issue_time), self.policy.threshold, self.policy.buffer) if len(eligible) else None
         return result

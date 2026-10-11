@@ -1,5 +1,9 @@
 # Artifact lịch sử của Khánh
 
-`lightgbm_model.txt` và `test_results.json` được giữ nguyên từ commit `f0404c5`.
-Chúng thuộc notebook LightGBM trước sửa trong `notebooks/archive/`, không phải model HGB bàn giao ngày 02/10/2026.
-Không ghép buffer/điểm số của các file này với model khác. Notebook 02 hiện tại đọc model đã khóa của Duy và mặc định chưa chạy calibration/test.
+- `lightgbm_model.txt`: LightGBM **15 feature, 457 cây**, giữ nguyên byte/hash.
+- `test_results.json`: score lịch sử; đối chiếu mới khớp MAE/RMSE/precision/recall/buffer.
+- `policy.json`: bàn giao lịch sử **sai hash model**, không active. Inspector hiển thị sai khác; không sửa hash để né kiểm tra.
+- Calibration tính lại và score đầy đủ ở [kết quả mới](../../reports/steel/khanh_lightgbm_verified_2026-10-11/verification.json).
+- Feature extension 19 biến thuộc [study riêng](../../reports/steel/khanh_gate7_2026-10-11/validation_comparison.csv).
+
+Demo mặc định dùng HGB của Duy, policy theo đúng artifact HGB. [Giới hạn và kết quả](../../docs/results.md).

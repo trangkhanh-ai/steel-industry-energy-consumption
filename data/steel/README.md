@@ -1,5 +1,7 @@
 # Dữ liệu UCI Steel
 
+**Tác giả dataset:** Sathishkumar V E, Changsun Shin và Yongyun Cho (2021).
+
 **Nguồn:** [UCI Steel Industry Energy Consumption](https://archive.ics.uci.edu/dataset/851/steel+industry+energy+consumption), DOI `10.24432/C52G8C`, CC BY 4.0. File `raw/Steel_industry_data.csv` là bản CSV gốc, 2.731.389 byte, SHA-256 `9B1CEE6F9CB9CD9DF2B95814CA90A9A2FF15B7F5F1FBA0FAE3C643E82072EACC`. Không sửa file này; `.gitattributes` giữ CRLF khi checkout.
 
 CSV có **35.040 dòng × 11 cột**, trải từ `2018-01-01 00:00` đến `2018-12-31 23:45`. Thứ tự dòng gốc không tăng dần: bản ghi `00:00` nằm cuối mỗi ngày (365 lần timestamp lùi). Pipeline parse `%d/%m/%Y %H:%M`, sắp xếp và xác nhận lưới 15 phút đầy đủ trước khi tạo nhãn/feature. Có 0 ô thiếu, 0 timestamp trùng và 1 bản ghi `Usage_kWh = 0`.

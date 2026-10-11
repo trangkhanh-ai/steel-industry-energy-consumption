@@ -13,3 +13,33 @@ reports/steel/modeling/**/*.sqlite3*
 
 # Reproducible local model runs, logs, metrics and browser screenshots.
 reports/steel/modeling/
+
+# Operator sessions belong to the local machine, not the source delivery.
+reports/steel/**/demo_sessions/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+# Generated previews/ZIPs can be rebuilt; keep the final Word and PDF.
+outputs/**/rendered/
+outputs/**/render/
+outputs/**/export_pdf.ps1
+outputs/**/*.zip
+outputs/**/package_check/
+
+# Local exports and academic deliverables are intentionally not published.
+outputs/
+*.docx
+*.pdf
+*.ppt
+*.pptx
+*.tex
+*.zip
+docs/final_report_content.md
+docs/references/
+requirements-report.txt
+scripts/build_ieee_report.py
+# New exploratory runs: promote selected results explicitly after review.
+reports/steel/local_*/
+
+# Previous local academic-deliverable run; release evidence is under release_*.
+reports/steel/final_*/

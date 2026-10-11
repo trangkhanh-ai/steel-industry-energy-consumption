@@ -5,3 +5,10 @@ data/steel/raw/Steel_industry_data.csv -text -diff
 *.ipynb text eol=lf
 *.json text eol=lf
 *.txt text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.ps1 text eol=lf
+*.yml text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf

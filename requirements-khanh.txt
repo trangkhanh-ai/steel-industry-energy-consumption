@@ -1,2 +1,3 @@
--r requirements-notebooks.txt
+-r requirements.txt
+# Optional study only; no change to the HGB model in the demo.
 lightgbm==4.6.0

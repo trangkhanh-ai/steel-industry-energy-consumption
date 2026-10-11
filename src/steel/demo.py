@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import ctypes
+import json
 import os
 import sys
 from time import perf_counter, process_time
@@ -11,7 +12,6 @@ import pandas as pd
 
 from .monitoring import ForecastMonitor, valid_time
 from .inference import DEFAULT_MODEL_SUBDIR
-from .policy import DEFAULT_POLICY
 from .preprocessing import load_official_raw
 
 
@@ -40,12 +40,25 @@ class ReplayDemo:
     LAST_ORIGIN = pd.Timestamp("2018-09-30 22:45")
     END = pd.Timestamp("2018-09-30 23:45")
 
-    def __init__(self, root, model_dir=None, sessions_dir=None, policy_path=DEFAULT_POLICY):
+    def __init__(self, root, model_dir=None, sessions_dir=None, policy_path=None):
         self.root = Path(root)
-        self.policy_path = Path(policy_path)
         self.model_dir = Path(model_dir) if model_dir else self.root / DEFAULT_MODEL_SUBDIR
         self.sessions_dir = Path(sessions_dir) if sessions_dir else self.root / "reports/steel/modeling/demo_sessions"
         raw, self.audit = load_official_raw(self.root / "data/steel/raw/Steel_industry_data.csv")
+        self.policy_path = Path(policy_path) if policy_path is not None else None
+        if self.policy_path is not None:
+            # Calibration Oct is historical information only from November onward.
+            self.START = pd.Timestamp("2018-11-01")
+            try:
+                policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
+                self.START = max(self.START, valid_time(policy["valid_from"]))
+            except (OSError, ValueError, TypeError, KeyError):
+                # Let the monitor show policy_unavailable, never invent a policy.
+                pass
+            self.END = raw.observation_time.max()
+            self.LAST_ORIGIN = self.END - pd.Timedelta(hours=1)
+            if self.START > self.LAST_ORIGIN:
+                raise ValueError("Không có dữ liệu sau giai đoạn calibration cho replay")
         self.history = raw.loc[raw.observation_time.between(self.START-pd.Timedelta(days=7), self.END), ["observation_time", "Usage_kWh"]].reset_index(drop=True)
         self.monitor = None
         self.current = None
@@ -73,7 +86,7 @@ class ReplayDemo:
         if action == "reset":
             t = valid_time(start)
             if not self.START <= t <= self.LAST_ORIGIN:
-                raise ValueError("Chọn mốc 15 phút từ 01/09 00:00 đến 30/09/2018 22:45.")
+                raise ValueError(f"Chọn mốc 15 phút từ {self.START} đến {self.LAST_ORIGIN}.")
             self.close()
             self.session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "_" + uuid4().hex[:10]
             self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3", self.policy_path)
@@ -117,14 +130,20 @@ class ReplayDemo:
         base = {"session": self.session, "clock": self.current.isoformat() if self.current is not None else None,
                 "first_start": self.START.isoformat(), "last_start": self.LAST_ORIGIN.isoformat(),
                 "end": self.END.isoformat(), "finished": self.current == self.END,
-                "alert_policy": "not_configured", "source": "UCI Steel · dữ liệu đo năm 2018",
+                "alert_policy": "not_configured", "policy_info": None, "model_info": None,
+                "source": "UCI Steel · dữ liệu đo năm 2018",
                 "history": [], "forecasts": [], "errors": [], "metrics": None, "current_forecast": None,
-                "decisions": [], "model_info": None, "policy_info": None}
+                "decisions": []}
         if self.monitor is None:
             return base
+        base["model_info"] = self.monitor.model.model_info if self.monitor.model else None
         base["policy_info"] = self.monitor.policy_info
-        if self.monitor.model is not None:
-            base["model_info"] = self.monitor.model.display_metadata()
+        if self.monitor.policy is not None:
+            base["alert_policy"] = "configured"
+            base["policy_info"] = self.monitor.policy.information()
+        elif self.monitor.policy_error:
+            base["alert_policy"] = "policy_unavailable"
+            base["policy_info"] = {"status": "policy_unavailable", "detail": self.monitor.policy_error}
         observed = self.history.loc[self.history.observation_time.le(self.current)].tail(96)
         base["history"] = [{"time": t.isoformat(), "usage_kWh": float(v)} for t,v in observed.itertuples(index=False, name=None)]
         base["current_forecast"] = self.last_response
@@ -133,10 +152,11 @@ class ReplayDemo:
         rows = self.monitor.db.execute("SELECT * FROM forecasts WHERE issue_time<=? ORDER BY issue_time DESC LIMIT 20", (self.current.isoformat(),)).fetchall()
         for r in rows:
             ready = r["evaluated_as_of"] is not None and r["evaluated_as_of"] <= self.current.isoformat()
+            label_status = "available" if ready else "waiting_for_observations" if r["forecast_end"] <= self.current.isoformat() else "waiting"
             base["forecasts"].append({"issue_time": r["issue_time"], "forecast_end": r["forecast_end"],
                                       "prediction": r["predicted_kWh"], "actual": r["actual_kWh"] if ready else None,
                                       "error": r["predicted_kWh"]-r["actual_kWh"] if ready else None,
-                                      "label_status": "available" if ready else
-                                      ("waiting_for_observations" if r["forecast_end"] <= self.current.isoformat() else "waiting")})
+                                      "label_status": label_status,
+                                      "decision": json.loads(r["decision_json"]) if r["decision_json"] else None})
         base["errors"] = [dict(r) for r in self.monitor.db.execute("SELECT issue_time,status,detail FROM requests WHERE status!='forecast_ready' ORDER BY id DESC LIMIT 5")]
         return base

@@ -36,8 +36,11 @@ def check_requirements(path, version_lookup=version, stack=()):
 
 
 def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--requirements", type=Path, default=ROOT / "requirements-demo.txt")
+    parser.add_argument("--policy", type=Path, default=ROOT / "reports/steel/release_2026-10-11/locked_policy.json")
     args = parser.parse_args(argv)
     try:
         errors = check_requirements(args.requirements)
@@ -45,7 +48,7 @@ def main(argv=None):
             raise ValueError("; ".join(errors))
         from src.steel.inference import DEFAULT_MODEL_SUBDIR, SteelForecaster
         from src.steel.preprocessing import load_official_raw
-        from src.steel.policy import inspect_policy
+        from src.steel.policy import AlertPolicy, inspect_policy
         raw, _ = load_official_raw(ROOT / "data/steel/raw/Steel_industry_data.csv")
         model = SteelForecaster(ROOT / DEFAULT_MODEL_SUBDIR)
         t = raw.observation_time.searchsorted("2018-09-01")
@@ -53,13 +56,15 @@ def main(argv=None):
         for file in ("index.html", "app.js", "style.css"):
             if not (ROOT / "web/steel_demo" / file).is_file():
                 raise FileNotFoundError(file)
+        active = AlertPolicy(args.policy, model.duy_forecaster.manifest)
         policy = inspect_policy(model=model)
     except Exception as error:
         print(f"NOT READY: {type(error).__name__}: {error}")
         print(f"Check dependencies in {args.requirements.name}; use a separate environment for each workflow.")
         return 1
     print(f"READY FOR REPLAY: Python {sys.version.split()[0]}, {args.requirements.name}, original data/model/UI verified.")
-    print(f"POLICY: {policy['status']}; alerts disabled, calibration not approved by this check.")
+    print(f"HGB POLICY READY: threshold={active.threshold:.6f} kWh, buffer={active.buffer:.6f} kWh, valid from {active.valid_from}.")
+    print(f"HISTORICAL LIGHTGBM HANDOFF: {policy['status']}; not activated in the HGB demo.")
     for issue in policy["issues"]:
         print(f"  {issue['code']}: {issue['detail']}")
     return 0

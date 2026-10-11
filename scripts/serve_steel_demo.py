@@ -74,8 +74,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--model-dir", type=Path, default=ROOT / DEFAULT_MODEL_SUBDIR)
     parser.add_argument("--sessions-dir", type=Path, default=ROOT / "reports/steel/modeling/demo_sessions")
+    parser.add_argument("--policy", type=Path, help="Policy đã hiệu chỉnh; replay chỉ sau valid_from của policy")
     args = parser.parse_args()
-    demo = ReplayDemo(ROOT, args.model_dir, args.sessions_dir)
+    demo = ReplayDemo(ROOT, args.model_dir, args.sessions_dir, args.policy)
     try:
         with HTTPServer(("127.0.0.1", args.port), make_handler(demo)) as server:
             print(f"Steel replay: http://127.0.0.1:{server.server_port} — Ctrl+C to stop", flush=True)

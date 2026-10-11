@@ -86,3 +86,5 @@ Chứng cứ kiểm source mới nằm trong [verification.json](../reports/stee
 - 12/12 lỗi đầu vào bị từ chối; 4/4 kịch bản failure demo đạt.
 - Edge: 24 bước đo, 0 lỗi JavaScript, desktop/mobile và actual trễ/nhật ký đạt.
 - Warm p95 model-only 7.04 ms; complete forecast 43.12 ms; browser request→render 160.72 ms. UI chưa đạt mục tiêu 100 ms.
+- [GitHub Actions trên Linux](https://github.com/trangkhanh-ai/steel-industry-energy-consumption/actions/runs/38145460802) PASS cho commit source 09138e0.
+- Clone mới từ GitHub: source/model hash, policy HGB, replay và actual trễ đạt; không có file học thuật trong cây publish.

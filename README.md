@@ -2,6 +2,7 @@
 
 ### Dự báo điện năng ngành thép · Đồ án Ứng dụng AI trong Công nghiệp
 
+[![Checks](https://github.com/trangkhanh-ai/steel-industry-energy-consumption/actions/workflows/checks.yml/badge.svg)](https://github.com/trangkhanh-ai/steel-industry-energy-consumption/actions/workflows/checks.yml)
 ![Python](https://img.shields.io/badge/Python-3.14-blue)
 ![Task](https://img.shields.io/badge/Task-Time%20Series%20Forecasting-teal)
 ![Data](https://img.shields.io/badge/Data-UCI%20Steel-orange)

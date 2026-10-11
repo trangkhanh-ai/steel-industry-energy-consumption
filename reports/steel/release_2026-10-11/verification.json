@@ -230,5 +230,20 @@
       "04_khanh_lightgbm_study.ipynb"
     ],
     "execution_environment": "Global Python 3.14, nbformat/IPython; no model training or artifact write by these cells"
+  },
+  "github_actions": {
+    "passed": true,
+    "tested_commit": "09138e0c003437c41d1f9d2e36c15d4dfe79317b",
+    "runner": "ubuntu-latest",
+    "workflow_run_url": "https://github.com/trangkhanh-ai/steel-industry-energy-consumption/actions/runs/38145460802"
+  },
+  "published_clone": {
+    "passed": true,
+    "cloned_commit": "09138e0c003437c41d1f9d2e36c15d4dfe79317b",
+    "source_model_hash_checks": true,
+    "hgb_policy_replay": true,
+    "delayed_actual": true,
+    "lightgbm_artifact_hash_unchanged": true,
+    "academic_files_in_public_tree": 0
   }
 }

@@ -19,7 +19,7 @@ reports/steel/**/demo_sessions/
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
-# Generated previews/ZIPs can be rebuilt; keep the final Word and PDF.
+# Generated local previews and archives are not published.
 outputs/**/rendered/
 outputs/**/render/
 outputs/**/export_pdf.ps1

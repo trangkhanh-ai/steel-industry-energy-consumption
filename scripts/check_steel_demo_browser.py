@@ -43,10 +43,24 @@ def run(url, output):
         def no_future(state):
             assert all(row["time"] <= state["clock"] for row in state["history"])
             assert all(row["actual"] is None for row in state["forecasts"] if row["forecast_end"] > state["clock"])
+            for row in state['forecasts']:
+                q = row.get('probabilistic')
+                if q:
+                    assert all(step['actual_kWh'] is None for step in q['intervals'] if step['time'] > state['clock'])
+                    if q['forecast_end'] > state['clock']:
+                        assert q['hour_total']['actual_kWh'] is None and q['max_interval']['actual_kWh'] is None
 
         initial = start(initial_start)
         no_future(initial)
         assert initial["forecasts"][0]["actual"] is None
+        quantiles_enabled = initial.get('probabilistic_info', {}).get('status') == 'configured' if initial.get('probabilistic_info') else False
+        if quantiles_enabled:
+            expect(page.locator('#probabilisticPanel')).to_be_visible()
+            assert page.locator('#intervalRows tr').count() == 4
+            assert page.locator('#intervalChart .actual').count() == 0
+            expect(page.locator('#predictionHeading')).to_contain_text('MODEL MỚI')
+            expect(page.locator('#alertHeading')).to_contain_text('phân vị')
+            assert initial['metrics']['probabilistic_metrics']['point_hour']['rows'] == 0
         page.locator("#inspect").click()
         expect(page.locator("#decisionFeedback")).to_contain_text("Nhập tên")
         assert not page.request.get(url+"/api/state").json()["decisions"]
@@ -89,6 +103,19 @@ def run(url, output):
             if i == 3:
                 assert state["metrics"]["models"][0]["all_matured"]["rows"] == 1
                 page.screenshot(path=str(output / "desktop.png"), full_page=True)
+            if quantiles_enabled and i < 4:
+                q = next(row['probabilistic'] for row in state['forecasts'] if row['issue_time']==initial['clock'])
+                assert sum(step['actual_kWh'] is not None for step in q['intervals']) == i+1
+                assert page.locator('#intervalChart .actual').count() == i+1
+                measured = {row['time']:row['usage_kWh'] for row in state['history']}
+                for interval in q['intervals']:
+                    if interval['actual_kWh'] is not None:
+                        assert interval['actual_kWh'] == measured[interval['time']]
+                assert state['decisions'][0]['context']['probabilistic'] == context['probabilistic']
+                assert all(step['actual_kWh'] is None for step in context['probabilistic']['intervals'])
+                if i==3:
+                    assert state['metrics']['probabilistic_metrics']['point_hour']['rows'] == 1
+                    expect(page.locator('#quantileCoverage')).to_contain_text('1 nhãn')
         # Play advances the clock; pause stops subsequent scheduled steps.
         before = page.locator("#clock").inner_text()
         page.locator("#play").click()
@@ -127,8 +154,11 @@ def run(url, output):
                    "process_cpu_p95_ms": float(np.quantile([r["process_cpu_ms"] for r in measurements], .95)),
                    "server_rss_max_MB": max(r["process_rss_bytes"] for r in measurements)/1048576,
                    "model_bytes": final["performance"]["model_bytes"],
+                   'total_model_bytes': final['performance'].get('total_model_bytes', final['performance']['model_bytes']),
                    "period_start": period["first_start"], "period_end": period["end"],
                    "alert_policy": initial.get("alert_policy"),
+                   'probabilistic_enabled': quantiles_enabled,
+                   'probabilistic_model_sha256': initial['probabilistic_info']['model_sha256'] if quantiles_enabled else None,
                    "policy_info": initial.get("policy_info"),
                    "model_info": initial.get("model_info"),
                    "saved_decision_context": context,

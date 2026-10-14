@@ -9,7 +9,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import sklearn
-from threadpoolctl import threadpool_limits
+from threadpoolctl import ThreadpoolController
 
 from .preprocessing import BASE_FEATURES, FREQUENCY, HORIZON_STEPS, LONGEST_LAG_STEPS, sha256_file
 
@@ -83,6 +83,7 @@ class SteelForecaster:
         run_dir = Path(run_dir)
         self.duy_forecaster = None
         self.model_info = {"run_directory": run_dir.name, "run": run_dir.name}
+        self.thread_controller = None
         if (run_dir / "model_handoff.json").exists():
             # Adapter giao diện cũ -> artifact Duy; không fit lại hay đổi model.
             from .duy_inference import DuyForecaster
@@ -97,6 +98,7 @@ class SteelForecaster:
             if self.model_sha256 is None:
                 identity = self.configuration + ":" + metadata["baseline_state_sha256"]
                 self.model_sha256 = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            self.thread_controller = ThreadpoolController()
             return
         manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
         if manifest.get("feature_contract") != FEATURE_CONTRACT:
@@ -117,19 +119,25 @@ class SteelForecaster:
         parameters = frozen["parameters"][self.configuration]
         if any(self.model.get_params()[key] != value for key, value in parameters.items()):
             raise ValueError("Selected model parameters disagree with the frozen run")
+        self.thread_controller = ThreadpoolController()
 
-    def predict(self, history: pd.DataFrame, issue_time) -> dict:
-        if self.duy_forecaster is not None:
-            result = self.duy_forecaster.predict(history, issue_time)
-            return {"observation_time": pd.Timestamp(issue_time).isoformat(),
-                    "forecast_start": pd.Timestamp(result["forecast_start"]).isoformat(),
-                    "forecast_end": pd.Timestamp(result["forecast_end"]).isoformat(),
-                    "predicted_next_60m_kWh": result["predicted_next_60m_kWh"],
-                    "model_configuration": self.configuration,
-                    "model_sha256": self.model_sha256, "status": result["status"]}
-        x = features_at_issue(history, issue_time)
-        with threadpool_limits(limits=1):
-            prediction = float(self.model.predict(x)[0])
+    def prepare_features(self, history, issue_time):
+        from .live_features import latest_features
+        return latest_features(history, issue_time)
+
+    def predict_features(self, x, issue_time, history=None):
+        if list(x.columns) != list(BASE_FEATURES) or len(x) != 1 or not np.isfinite(x.to_numpy()).all():
+            raise ValueError("Cần một hàng feature hợp lệ")
+        with self.thread_controller.limit(limits=1):
+            if self.duy_forecaster is not None:
+                from .duy_forecasting import predict_baseline, predict_energy
+                forecaster = self.duy_forecaster
+                if forecaster.manifest['kind'] == 'baseline':
+                    prediction = predict_baseline(self.configuration, history, issue_time, forecaster.baseline_state)
+                else:
+                    prediction = float(predict_energy(forecaster.model, x)[0])
+            else:
+                prediction = float(self.model.predict(x)[0])
         if not np.isfinite(prediction) or prediction < 0:
             raise ValueError("Model returned invalid energy; do not display an operational forecast")
         t = pd.Timestamp(issue_time)
@@ -137,3 +145,6 @@ class SteelForecaster:
                 "forecast_end": (t+HORIZON_STEPS*FREQUENCY).isoformat(),
                 "predicted_next_60m_kWh": prediction, "model_configuration": self.configuration,
                 "model_sha256": self.model_sha256, "status": "forecast_only_no_alert_policy"}
+
+    def predict(self, history: pd.DataFrame, issue_time) -> dict:
+        return self.predict_features(self.prepare_features(history, issue_time), issue_time, history)

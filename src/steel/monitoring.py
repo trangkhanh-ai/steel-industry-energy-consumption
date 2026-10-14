@@ -14,7 +14,7 @@ from time import perf_counter
 import numpy as np
 import pandas as pd
 
-from .inference import SteelForecaster, features_at_issue
+from .inference import SteelForecaster
 from .preprocessing import FREQUENCY
 from .policy import AlertPolicy, performance_watch, DEFAULT_POLICY, inspect_policy
 from .evaluation import evaluate_alerts
@@ -28,12 +28,15 @@ def valid_time(value):
 
 
 class ForecastMonitor:
-    def __init__(self, model_dir: Path, database: Path, policy_path=None):
+    def __init__(self, model_dir: Path, database: Path, policy_path=None, probabilistic_dir=None):
         database = Path(database)
         database.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(database)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
+        # WAL giảm thao tác journal mỗi lần ghi; FULL vẫn đồng bộ transaction.
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=FULL")
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS forecasts (
                 id INTEGER PRIMARY KEY, issue_time TEXT NOT NULL,
@@ -61,6 +64,8 @@ class ForecastMonitor:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(forecasts)")}
         if "decision_json" not in columns:
             self.db.execute("ALTER TABLE forecasts ADD COLUMN decision_json TEXT")
+        if "probabilistic_json" not in columns:
+            self.db.execute("ALTER TABLE forecasts ADD COLUMN probabilistic_json TEXT")
         self.policy, self.policy_error = None, None
         self.model_error = None
         try:
@@ -95,6 +100,17 @@ class ForecastMonitor:
                 self._log(None, "policy_unavailable", self.policy_error, 0, None)
         elif policy_path is not None:
             self.policy_error = "Không thể dùng policy khi model chưa được nạp hợp lệ"
+        self.probabilistic, self.probabilistic_error = None, None
+        if probabilistic_dir is not None:
+            try:
+                from .probabilistic import ProbabilisticForecaster
+                if self.model is None or self.model.duy_forecaster is None:
+                    raise ValueError('Phân vị cần model nguồn Duy có manifest hợp lệ')
+                source = self.model.duy_forecaster.manifest['source_sha256']
+                self.probabilistic = ProbabilisticForecaster(probabilistic_dir, source)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError, EOFError) as error:
+                self.probabilistic_error = str(error)
+                self._log(None, 'probabilistic_unavailable', str(error), 0, None)
 
     def close(self):
         self.db.close()
@@ -128,7 +144,7 @@ class ForecastMonitor:
             raise ValueError("Chỉ ghi nhận đã xem, đề nghị kiểm tra hoặc bỏ qua.")
         operator, note = operator.strip(), note.strip()
         row = self.db.execute("""SELECT r.*, f.predicted_kWh, f.model_sha256,
-            f.model_configuration, f.decision_json FROM requests r LEFT JOIN forecasts f ON f.id=r.forecast_id
+            f.model_configuration, f.decision_json, f.probabilistic_json FROM requests r LEFT JOIN forecasts f ON f.id=r.forecast_id
             WHERE r.id=?""", (request_id,)).fetchone()
         if row is None or row["issue_time"] != now:
             raise ValueError("Chỉ ghi quyết định cho quan sát tại thời điểm đang phát lại.")
@@ -139,6 +155,7 @@ class ForecastMonitor:
         context["decision"] = json.loads(row["decision_json"]) if row["decision_json"] else None
         context["alert_policy"] = "configured" if context["decision"] and context["decision"].get("policy_sha256") else "not_configured"
         context["policy_inspection"] = self.policy_info
+        context['probabilistic'] = json.loads(row['probabilistic_json']) if row['probabilistic_json'] else None
         context_json = json.dumps(context, ensure_ascii=False, allow_nan=False, sort_keys=True)
         values = (request_id, now, operator, action, note, context_json)
         previous = self.db.execute("SELECT * FROM decisions WHERE token=?", (token,)).fetchone()
@@ -166,6 +183,7 @@ class ForecastMonitor:
         except (ValueError, TypeError):
             issue = None
         status, detail, forecast_id, prediction = "invalid_history", None, None, None
+        probabilistic, probabilistic_error = None, self.probabilistic_error
         decision = {"status": "not_configured", "alert": None,
                     "recommendation": "Chỉ dự báo; chưa có policy cảnh báo."}
         usage_watch = None
@@ -176,15 +194,21 @@ class ForecastMonitor:
                 t = valid_time(issue_time)
                 issue = t.isoformat()
                 # Separate invalid observations from a model execution failure.
-                features_at_issue(history, t)
+                features = self.model.prepare_features(history, t)
             except (ValueError, TypeError, AttributeError, KeyError) as error:
                 detail = str(error)
             else:
                 try:
-                    prediction = self.model.predict(history, t)
+                    prediction = self.model.predict_features(features, t, history)
                 except (ValueError, TypeError, RuntimeError, OSError) as error:
                     status, detail = "prediction_failed", str(error)
                 else:
+                    if self.probabilistic is not None:
+                        try:
+                            probabilistic = self.probabilistic.predict_features(features, t)
+                        except (ValueError, TypeError, RuntimeError) as error:
+                            probabilistic_error = str(error)
+                            self._log(issue, 'probabilistic_failed', str(error), 0, None)
                     if self.policy_error:
                         decision = {"status": "policy_unavailable", "alert": None, "detail": self.policy_error,
                                     "recommendation": "Kiểm phiên bản policy; không suy ra an toàn từ dự báo thấp."}
@@ -196,15 +220,17 @@ class ForecastMonitor:
                             decision = {"status": "policy_unavailable", "alert": None, "detail": str(error),
                                         "recommendation": "Kiểm policy và thời điểm calibration."}
                     decision_json = json.dumps(decision, ensure_ascii=False, sort_keys=True, allow_nan=False)
+                    probabilistic_json = json.dumps(probabilistic, ensure_ascii=False, sort_keys=True, allow_nan=False)
                     self.db.execute("""INSERT OR IGNORE INTO forecasts
-                        (issue_time,forecast_start,forecast_end,predicted_kWh,model_sha256,model_configuration,decision_json)
-                        VALUES(?,?,?,?,?,?,?)""", (issue, prediction["forecast_start"], prediction["forecast_end"],
-                        prediction["predicted_next_60m_kWh"], prediction["model_sha256"], prediction["model_configuration"], decision_json))
-                    saved = self.db.execute("SELECT id,predicted_kWh,decision_json FROM forecasts WHERE issue_time=? AND model_sha256=?",
+                        (issue_time,forecast_start,forecast_end,predicted_kWh,model_sha256,model_configuration,decision_json,probabilistic_json)
+                        VALUES(?,?,?,?,?,?,?,?)""", (issue, prediction["forecast_start"], prediction["forecast_end"],
+                        prediction["predicted_next_60m_kWh"], prediction["model_sha256"], prediction["model_configuration"], decision_json, probabilistic_json))
+                    saved = self.db.execute("SELECT id,predicted_kWh,decision_json,probabilistic_json FROM forecasts WHERE issue_time=? AND model_sha256=?",
                                             (issue, prediction["model_sha256"])).fetchone()
                     forecast_id = saved["id"]
                     if (saved["predicted_kWh"] != prediction["predicted_next_60m_kWh"]
-                            or saved["decision_json"] != decision_json):
+                            or saved["decision_json"] != decision_json
+                            or (saved['probabilistic_json'] or 'null') != probabilistic_json):
                         # Never replace a forecast after its outcome could be known.
                         status, detail, prediction = "forecast_conflict", "Different prediction already stored for this timestamp/model", None
                     else:
@@ -214,7 +240,9 @@ class ForecastMonitor:
         if status != "forecast_ready":
             decision = {"status": "unavailable", "alert": None, "recommendation": "Kiểm dữ liệu/model trước khi sử dụng."}
         return {"status": status, "detail": detail, "forecast_id": forecast_id, "request_id": request_id,
-                "prediction": prediction, "decision": decision, "usage_watch": usage_watch, "request_ms": elapsed}
+                "prediction": prediction, "decision": decision, "usage_watch": usage_watch, "request_ms": elapsed,
+                'probabilistic': probabilistic if status=='forecast_ready' else None,
+                'probabilistic_error': probabilistic_error}
 
     def observe(self, history: pd.DataFrame, as_of) -> dict:
         try:
@@ -257,7 +285,7 @@ class ForecastMonitor:
         self.db.commit()
         return {"as_of": now.isoformat(), "newly_evaluated": evaluated, "matured_waiting_for_observations": missing}
 
-    def snapshot(self, as_of) -> dict:
+    def snapshot(self, as_of, include_alert_metrics=True) -> dict:
         """Metrics use only labels recorded by as_of; 24h is a display window."""
         now = valid_time(as_of)
         frame = pd.read_sql_query("SELECT * FROM forecasts WHERE issue_time<=?", self.db, params=(now.isoformat(),))
@@ -294,5 +322,30 @@ class ForecastMonitor:
                 eligible = part.loc[same_policy]
                 result["performance_watch"] = performance_watch(eligible, self.policy.reference_mae)
                 result["alert_metrics"] = evaluate_alerts(eligible.actual_kWh, eligible.predicted_kWh,
-                    pd.to_datetime(eligible.issue_time), self.policy.threshold, self.policy.buffer) if len(eligible) else None
+                    pd.to_datetime(eligible.issue_time), self.policy.threshold, self.policy.buffer) if include_alert_metrics and len(eligible) else None
+                result["alert_metrics_status"] = "computed" if include_alert_metrics else "available_on_demand"
+        # Tính metric model mới theo yêu cầu; chỉ dùng tổng actual đã đủ 4 bản đo.
+        if self.probabilistic is not None:
+            from .probabilistic import interval_metrics, research_alert_metrics
+            records = []
+            for row in scored.itertuples():
+                saved = json.loads(row.probabilistic_json) if row.probabilistic_json else None
+                if saved and saved['model_sha256'] == self.probabilistic.metadata['model_sha256']:
+                    records.append((row.issue_time, row.actual_kWh, saved))
+            result['probabilistic_metrics'] = {'rows': len(records), 'hour_total': None,
+                'point_hour': {'rows': 0, 'mae_kWh': None, 'bias_kWh': None},
+                'model_sha256': self.probabilistic.metadata['model_sha256'],
+                'research_alert': None, 'alert_metrics_status': 'computed' if include_alert_metrics else 'available_on_demand'}
+            if records:
+                times = [r[0] for r in records]
+                actual = np.array([r[1] for r in records])
+                points = np.array([r[2]['forecast_sum_of_interval_points_kWh'] for r in records])
+                result['probabilistic_metrics']['point_hour'] = {'rows': len(records),
+                    'mae_kWh': float(np.mean(np.abs(points-actual))), 'bias_kWh': float(np.mean(points-actual))}
+                q = np.array([[r[2]['hour_total'][f'p{p}_kWh'] for p in (10, 50, 90)] for r in records])
+                margin = self.probabilistic.metadata['calibration_margins_kWh']['hour_total']
+                threshold = self.probabilistic.metadata['train_research_thresholds_kWh']['hour_total']
+                result['probabilistic_metrics']['hour_total'] = interval_metrics(actual, q, margin)
+                if include_alert_metrics:
+                    result['probabilistic_metrics']['research_alert'] = research_alert_metrics(actual, q, times, threshold, margin)
         return result

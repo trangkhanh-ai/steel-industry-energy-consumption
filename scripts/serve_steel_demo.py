@@ -6,12 +6,16 @@ from pathlib import Path
 
 from src.steel.demo import ReplayDemo
 from src.steel.inference import DEFAULT_MODEL_SUBDIR
+from src.steel.probabilistic import DEFAULT_PROBABILISTIC_SUBDIR
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def make_handler(demo):
     class Handler(BaseHTTPRequestHandler):
+        # Tránh Nagle giữ packet nhỏ giữa HTTP headers và JSON body trên loopback.
+        disable_nagle_algorithm = True
+
         def log_message(self, *_):
             pass
 
@@ -39,6 +43,10 @@ def make_handler(demo):
                 return self.send(403, {"error": "Local origin required"})
             if self.path == "/api/state":
                 return self.send(200, demo.dispatch("state"))
+            if self.path == "/api/metrics":
+                if demo.monitor is None:
+                    return self.send(200, {"status": "no_session"})
+                return self.send(200, demo.monitor.snapshot(demo.current))
             files = {"/": ("index.html", "text/html; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"), "/style.css": ("style.css", "text/css; charset=utf-8")}
             if self.path not in files:
                 return self.send(404, {"error": "Not found"})
@@ -75,8 +83,12 @@ if __name__ == "__main__":
     parser.add_argument("--model-dir", type=Path, default=ROOT / DEFAULT_MODEL_SUBDIR)
     parser.add_argument("--sessions-dir", type=Path, default=ROOT / "reports/steel/modeling/demo_sessions")
     parser.add_argument("--policy", type=Path, help="Policy đã hiệu chỉnh; replay chỉ sau valid_from của policy")
+    parser.add_argument('--probabilistic-model-dir', type=Path, default=ROOT / DEFAULT_PROBABILISTIC_SUBDIR,
+                        help='Run 4 bước/phân vị từ CSV thật; không P_limit/biểu giá giả')
+    parser.add_argument('--legacy', action='store_true', help='Chỉ chạy model tổng giờ cũ để đối chiếu')
     args = parser.parse_args()
-    demo = ReplayDemo(ROOT, args.model_dir, args.sessions_dir, args.policy)
+    quantile_dir = None if args.legacy else args.probabilistic_model_dir
+    demo = ReplayDemo(ROOT, args.model_dir, args.sessions_dir, args.policy, quantile_dir)
     try:
         with HTTPServer(("127.0.0.1", args.port), make_handler(demo)) as server:
             print(f"Steel replay: http://127.0.0.1:{server.server_port} — Ctrl+C to stop", flush=True)

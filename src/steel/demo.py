@@ -40,17 +40,18 @@ class ReplayDemo:
     LAST_ORIGIN = pd.Timestamp("2018-09-30 22:45")
     END = pd.Timestamp("2018-09-30 23:45")
 
-    def __init__(self, root, model_dir=None, sessions_dir=None, policy_path=None):
+    def __init__(self, root, model_dir=None, sessions_dir=None, policy_path=None, probabilistic_dir=None):
         self.root = Path(root)
         self.model_dir = Path(model_dir) if model_dir else self.root / DEFAULT_MODEL_SUBDIR
         self.sessions_dir = Path(sessions_dir) if sessions_dir else self.root / "reports/steel/modeling/demo_sessions"
         raw, self.audit = load_official_raw(self.root / "data/steel/raw/Steel_industry_data.csv")
         self.policy_path = Path(policy_path) if policy_path is not None else None
-        if self.policy_path is not None:
+        self.probabilistic_dir = Path(probabilistic_dir) if probabilistic_dir is not None else None
+        if self.policy_path is not None or self.probabilistic_dir is not None:
             # Calibration Oct is historical information only from November onward.
             self.START = pd.Timestamp("2018-11-01")
             try:
-                policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
+                policy = json.loads(self.policy_path.read_text(encoding="utf-8")) if self.policy_path else {}
                 self.START = max(self.START, valid_time(policy["valid_from"]))
             except (OSError, ValueError, TypeError, KeyError):
                 # Let the monitor show policy_unavailable, never invent a policy.
@@ -65,14 +66,19 @@ class ReplayDemo:
         self.last_response = None
         self.session = None
         self.timings = []
+        self.metrics_cache = None
 
     def close(self):
         if self.monitor:
             self.monitor.close()
             self.monitor = None
 
+    def observed_rows(self, count):
+        end = self.history.observation_time.searchsorted(self.current, side='right')
+        return self.history.iloc[max(0, end-count):end]
+
     def _tick(self):
-        observed = self.history.loc[self.history.observation_time.le(self.current)].tail(673)
+        observed = self.observed_rows(673)
         try:
             self.monitor.observe(observed, self.current)
         except (ValueError, TypeError):
@@ -89,8 +95,9 @@ class ReplayDemo:
                 raise ValueError(f"Chọn mốc 15 phút từ {self.START} đến {self.LAST_ORIGIN}.")
             self.close()
             self.session = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "_" + uuid4().hex[:10]
-            self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3", self.policy_path)
+            self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3", self.policy_path, self.probabilistic_dir)
             self.current, self.timings = t, []
+            self.metrics_cache = None
             self._tick()
         elif action == "step":
             if self.monitor is None:
@@ -124,6 +131,9 @@ class ReplayDemo:
         payload["performance"] = {"backend_ms": duration, "process_cpu_ms": cpu_ms,
                                   "process_rss_bytes": resident_memory_bytes(), "session_backend_p95_ms": p95,
                                   "timed_actions": len(timings), "model_bytes": model_path.stat().st_size if model_path.exists() else None}
+        extra_bytes = self.monitor.probabilistic.model_path.stat().st_size if self.monitor and self.monitor.probabilistic else 0
+        payload['performance']['probabilistic_model_bytes'] = extra_bytes
+        payload['performance']['total_model_bytes'] = (payload['performance']['model_bytes'] or 0) + extra_bytes
         return payload
 
     def state(self):
@@ -133,10 +143,14 @@ class ReplayDemo:
                 "alert_policy": "not_configured", "policy_info": None, "model_info": None,
                 "source": "UCI Steel · dữ liệu đo năm 2018",
                 "history": [], "forecasts": [], "errors": [], "metrics": None, "current_forecast": None,
-                "decisions": []}
+                "decisions": [], 'probabilistic_info': None}
         if self.monitor is None:
             return base
         base["model_info"] = self.monitor.model.model_info if self.monitor.model else None
+        if self.monitor.probabilistic is not None:
+            base['probabilistic_info'] = {'status': 'configured', **self.monitor.probabilistic.metadata}
+        elif self.monitor.probabilistic_error:
+            base['probabilistic_info'] = {'status': 'unavailable', 'detail': self.monitor.probabilistic_error}
         base["policy_info"] = self.monitor.policy_info
         if self.monitor.policy is not None:
             base["alert_policy"] = "configured"
@@ -144,19 +158,37 @@ class ReplayDemo:
         elif self.monitor.policy_error:
             base["alert_policy"] = "policy_unavailable"
             base["policy_info"] = {"status": "policy_unavailable", "detail": self.monitor.policy_error}
-        observed = self.history.loc[self.history.observation_time.le(self.current)].tail(96)
+        observed = self.observed_rows(96)
         base["history"] = [{"time": t.isoformat(), "usage_kWh": float(v)} for t,v in observed.itertuples(index=False, name=None)]
         base["current_forecast"] = self.last_response
-        base["metrics"] = self.monitor.snapshot(self.current)
+        cache_key = (self.current, self.monitor.db.total_changes)
+        if self.metrics_cache is None or self.metrics_cache[0] != cache_key:
+            self.metrics_cache = (cache_key, self.monitor.snapshot(self.current, include_alert_metrics=False))
+        base["metrics"] = self.metrics_cache[1]
         base["decisions"] = self.monitor.decisions(self.current)
         rows = self.monitor.db.execute("SELECT * FROM forecasts WHERE issue_time<=? ORDER BY issue_time DESC LIMIT 20", (self.current.isoformat(),)).fetchall()
+        meter = None
+        if self.monitor.probabilistic is not None:
+            from .probabilistic import observed_measurements, attach_actuals_from_meter
+            try:
+                meter = observed_measurements(observed, self.current)
+            except (ValueError, TypeError):
+                pass  # Input lỗi: giữ actual chưa biết.
         for r in rows:
             ready = r["evaluated_as_of"] is not None and r["evaluated_as_of"] <= self.current.isoformat()
             label_status = "available" if ready else "waiting_for_observations" if r["forecast_end"] <= self.current.isoformat() else "waiting"
+            probabilistic = json.loads(r['probabilistic_json']) if r['probabilistic_json'] else None
+            if probabilistic and meter is not None:
+                try:
+                    probabilistic = attach_actuals_from_meter(probabilistic, meter, self.current)
+                except (ValueError, TypeError):
+                    # Keep missing/error actuals unknown; never display invented zeros.
+                    pass
             base["forecasts"].append({"issue_time": r["issue_time"], "forecast_end": r["forecast_end"],
                                       "prediction": r["predicted_kWh"], "actual": r["actual_kWh"] if ready else None,
                                       "error": r["predicted_kWh"]-r["actual_kWh"] if ready else None,
                                       "label_status": label_status,
-                                      "decision": json.loads(r["decision_json"]) if r["decision_json"] else None})
+                                      "decision": json.loads(r["decision_json"]) if r["decision_json"] else None,
+                                      'probabilistic': probabilistic})
         base["errors"] = [dict(r) for r in self.monitor.db.execute("SELECT issue_time,status,detail FROM requests WHERE status!='forecast_ready' ORDER BY id DESC LIMIT 5")]
         return base

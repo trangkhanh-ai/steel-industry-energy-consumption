@@ -1,5 +1,6 @@
 # Preserve the official CSV byte-for-byte so its SHA-256 stays verifiable.
 data/steel/raw/Steel_industry_data.csv -text -diff
+*.joblib -text -diff
 *.py text eol=lf
 *.md text eol=lf
 *.ipynb text eol=lf
@@ -12,3 +13,7 @@ data/steel/raw/Steel_industry_data.csv -text -diff
 *.yml text eol=lf
 .gitattributes text eol=lf
 .gitignore text eol=lf
+
+# A frozen manifest hashes the exact protocol bytes, including original newlines.
+reports/steel/release_*/protocol.json -text
+reports/steel/release_*/*_predictions.csv -text

@@ -10,7 +10,7 @@ try {
     & $demoPython -X utf8 -B -m scripts.check_steel_demo_environment
     if ($LASTEXITCODE -ne 0) { throw 'Demo startup checks failed. See the message above.' }
     if ($ForecastOnly) {
-        & $demoPython -X utf8 -B -m scripts.serve_steel_demo --port $Port
+        & $demoPython -X utf8 -B -m scripts.serve_steel_demo --port $Port --legacy
     } else {
         & $demoPython -X utf8 -B -m scripts.serve_steel_demo --port $Port --policy reports/steel/release_2026-10-11/locked_policy.json
     }

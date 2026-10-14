@@ -33,7 +33,14 @@ class SteelPolicyTests(unittest.TestCase):
     def test_actual_handoff_is_incompatible_and_never_activates(self):
         result = inspect_policy(model=self.model)
         self.assertEqual(result["status"], "incompatible")
-        self.assertEqual({x["code"] for x in result["issues"]}, {"model_mismatch", "artifact_hash_mismatch"})
+        # Historical LightGBM is incompatible with HGB in both LF and CRLF.
+        # The extra hash issue depends on the actual bytes of this checkout.
+        expected = {"model_mismatch"}
+        artifact = ROOT / "notebooks" / self.original["policy_metadata"]["model_artifact_path"]
+        actual_hash = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if actual_hash != self.original["policy_metadata"]["model_sha256"]:
+            expected.add("artifact_hash_mismatch")
+        self.assertEqual({x["code"] for x in result["issues"]}, expected)
         self.assertFalse(result["alerts_enabled"])
         self.assertEqual(result["policy_sha256"], hashlib.sha256(DEFAULT_POLICY.read_bytes()).hexdigest())
         self.assertNotIn("threshold_T_value_kWh", result)
@@ -68,6 +75,13 @@ class SteelPolicyTests(unittest.TestCase):
         data["policy_metadata"]["feature_schema"].reverse()
         result = self.inspect_copy(data)
         self.assertIn("schema_mismatch", [x["code"] for x in result["issues"]])
+        self.assertFalse(result["alerts_enabled"])
+
+    def test_wrong_artifact_hash_is_rejected_regardless_of_line_endings(self):
+        data = copy.deepcopy(self.original)
+        data["policy_metadata"]["model_sha256"] = "0" * 64
+        result = self.inspect_copy(data)
+        self.assertIn("artifact_hash_mismatch", {x["code"] for x in result["issues"]})
         self.assertFalse(result["alerts_enabled"])
 
     def test_model_unavailable_is_explicit_without_using_policy_as_forecast(self):

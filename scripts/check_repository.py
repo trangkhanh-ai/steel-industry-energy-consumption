@@ -6,9 +6,7 @@ import subprocess
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
-GUIDES = ("README.md", "CONTRIBUTING.md", "CHANGELOG.md", "docs/project.md",
-          "docs/getting_started.md", "docs/code_map.md", "docs/results.md", "docs/references.md",
-          "notebooks/README.md", "scripts/README.md", "src/steel/README.md")
+GUIDES = ("README.md",)
 BANNED_SUFFIXES = {".docx", ".pdf", ".ppt", ".pptx", ".tex", ".zip", ".sqlite3"}
 PRIVATE_FILES = {"docs/final_report_content.md", "scripts/build_ieee_report.py", "requirements-report.txt"}
 
@@ -18,7 +16,9 @@ def check():
     issues, notebook_count, python_count = [], 0, 0
     for name in sorted(set(files) - {""}):
         path = ROOT / name
-        if path.suffix.lower() in BANNED_SUFFIXES or name in PRIVATE_FILES or name.startswith("outputs/"):
+        if (path.suffix.lower() in BANNED_SUFFIXES or name in PRIVATE_FILES
+                or name.startswith(("outputs/", "docs/"))
+                or (path.suffix.lower() == ".md" and name != "README.md")):
             issues.append(f"Không publish: {name}")
         if not path.is_file() or path.suffix not in (".py", ".md", ".ipynb", ".json", ".js", ".css", ".html"):
             continue

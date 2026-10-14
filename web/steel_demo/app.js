@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let current = null, busy = false, playing = false, timer = null;
 let decisionToken = null;
+let selectedOrigin = null;
 const decisionLabels = {acknowledge:'Đã xem', inspect:'Đề nghị kiểm tra', dismiss:'Bỏ qua'};
 const nf = new Intl.NumberFormat('vi-VN', {maximumFractionDigits: 2, minimumFractionDigits: 2});
 const number = value => value == null ? '—' : nf.format(value);
@@ -29,7 +30,51 @@ function chart(rows){
   svg.append(node('polyline',{points,class:'series'}));
   for(const i of [0,Math.floor(rows.length/3),Math.floor(2*rows.length/3),rows.length-1])svg.append(node('text',{x:x(i),y:235,'text-anchor':i===0?'start':i===rows.length-1?'end':'middle'},timestamp(rows[i].time)));
 }
+function tableRow(body, values){
+  const tr=document.createElement('tr');
+  for(const value of values){const td=document.createElement('td');td.textContent=value;tr.append(td);}
+  body.append(tr);
+}
+function renderIntervals(){
+  const saved=current?.forecasts.find(row=>row.issue_time===selectedOrigin)?.probabilistic;
+  $('intervalRows').replaceChildren();const svg=$('intervalChart');svg.replaceChildren();
+  if(!saved){$('intervalTotal').textContent='Chưa có dự báo bốn bước hợp lệ.';return;}
+  for(const row of saved.intervals) tableRow($('intervalRows'),[timestamp(row.time),number(row.predicted_kWh),number(row.actual_kWh),number(row.actual_kWh==null?null:row.predicted_kWh-row.actual_kWh)]);
+  $('intervalTotal').textContent=`Tổng của bốn dự báo: ${number(saved.forecast_sum_of_interval_points_kWh)} kWh · Tổng đã đo: ${number(saved.hour_total.actual_kWh)} kWh. Chỉ tính tổng thực tế khi đủ cả bốn số đo.`;
+  const max=Math.max(1,...saved.intervals.map(r=>Math.max(r.predicted_kWh,r.actual_kWh??0)))*1.1;
+  const x=i=>75+i*220,y=v=>208-v/max*190;
+  for(let i=0;i<=4;i++){const yy=y(max*i/4);svg.append(node('line',{x1:45,y1:yy,x2:810,y2:yy,class:'grid'}));svg.append(node('text',{x:37,y:yy+4,'text-anchor':'end'},Math.round(max*i/4)));}
+  svg.append(node('polyline',{points:saved.intervals.map((r,i)=>`${x(i)},${y(r.predicted_kWh)}`).join(' '),class:'series'}));
+  saved.intervals.forEach((r,i)=>{
+    svg.append(node('text',{x:x(i),y:235,'text-anchor':'middle'},timestamp(r.time)));
+    if(r.actual_kWh!=null)svg.append(node('circle',{cx:x(i),cy:y(r.actual_kWh),r:5,class:'actual'}));
+  });
+}
+function renderProbabilistic(data){
+  $('probabilisticPanel').hidden=!data.probabilistic_info;
+  if(!data.probabilistic_info)return;
+  const q=data.current_forecast?.probabilistic;
+  $('quantileStatus').textContent=q?`Dự báo phát lúc ${timestamp(q.issue_time)} · ${q.point_method} · các phân vị là ước lượng từ dữ liệu.`:
+    data.current_forecast?.probabilistic_error||data.probabilistic_info.detail||'Chưa có dự báo phân vị tại thời điểm này.';
+  $('quantileRows').replaceChildren();
+  if(q){
+    for(const [key,label] of [['hour_total','Tổng giờ tới'],['max_interval','Lớn nhất trong 4 khoảng']]){
+      const v=q[key];tableRow($('quantileRows'),[label,number(v.p10_kWh),number(v.p50_kWh),number(v.p90_kWh),`${number(v.calibrated_lower_kWh)} → ${number(v.calibrated_upper_kWh)}`]);
+    }
+    const alert=q.research_alert;
+    $('quantileAlert').textContent=`${alert.alert?'Đề nghị kiểm tra khoảng tiêu thụ cao':'Dải trên chưa vượt ngưỡng nghiên cứu'} · Ngưỡng p95 TRAIN: ${number(alert.threshold_kWh)} kWh. Không phải giới hạn hợp đồng; người phụ trách xác nhận.`;
+  }else $('quantileAlert').textContent='Không có cảnh báo phân vị hợp lệ.';
+  const m=data.metrics?.probabilistic_metrics;
+  $('quantileCoverage').textContent=m?.rows?`Đối chiếu trong phiên: ${m.rows} nhãn tổng giờ đã đủ số đo · Độ phủ dải sau calibration: ${number(100*m.hour_total.calibrated_coverage)}%. Số nhãn ít chưa đủ kết luận độ tin cậy.`:'Chưa đủ bốn bản đo để tính độ phủ trong phiên.';
+  $('legacyComparison').textContent=data.current_forecast?.prediction?`Đối chứng model tổng giờ cũ: ${number(data.current_forecast.prediction.predicted_next_60m_kWh)} kWh · Cảnh báo buffer cũ: ${data.current_forecast.decision?.alert===true?'đề nghị kiểm tra':data.current_forecast.decision?.alert===false?'dưới ngưỡng nghiên cứu':'không khả dụng'}. Đây là phương án riêng.`:'Chưa có dự báo đối chứng model cũ.';
+  const origins=data.forecasts.filter(row=>row.probabilistic);
+  if(!origins.some(row=>row.issue_time===selectedOrigin))selectedOrigin=origins[0]?.issue_time??null;
+  $('forecastOrigin').replaceChildren();
+  for(const row of origins){const option=document.createElement('option');option.value=row.issue_time;option.textContent=`Phát lúc ${timestamp(row.issue_time)}`;option.selected=row.issue_time===selectedOrigin;$('forecastOrigin').append(option);}
+  renderIntervals();
+}
 function render(data){
+  if(current?.session !== data.session)selectedOrigin=null;
   if(current?.session !== data.session || current?.clock !== data.clock){
     $('decisionNote').value=''; $('decisionFeedback').textContent=''; decisionToken=null;
   }
@@ -49,9 +94,27 @@ function render(data){
   $('recommendation').textContent=decision?.recommendation||'Mở phiên để xem dự báo và khuyến nghị. Người phụ trách xác nhận; không gửi lệnh tới máy.';
   const info=data.model_info;
   $('modelInfo').textContent=info?`${info.model_name} · ${info.run_directory}\nMAE validation: ${number(info.validation_mae_kWh)} kWh; RMSE: ${number(info.validation_rmse_kWh)} kWh.\nFeature: ${info.feature_implementation}\nSHA-256: ${info.model_sha256}`:'Thông tin sẽ lấy từ model nạp hợp lệ khi mở phiên; không dùng điểm của model cũ.';
+  if(data.probabilistic_info?.status==='configured'){
+    const model=data.probabilistic_info;
+    $('modelInfo').textContent=`Model mới: ${model.point_method}, 4 point + 6 quantile\nFeature: ${model.features.length} cột · sklearn ${model.sklearn}\nSHA-256 bundle: ${model.model_sha256}\nModel đối chứng cũ: ${info?.model_name??'không khả dụng'}`;
+  }
   const m=data.metrics?.models?.[0];
   $('mae').textContent=m?.all_matured.rows?`${number(m.all_matured.mae_kWh)} kWh`:'—';
   $('scored').textContent=m?`${m.all_matured.rows} dự báo đã có đủ số đo thực tế`:'Chưa có kết quả đối chiếu';
+  const q=response?.probabilistic;
+  const newConfigured=data.probabilistic_info?.status==='configured';
+  $('predictionHeading').textContent=newConfigured?'DỰ BÁO TỔNG BỐN KHOẢNG · MODEL MỚI':'DỰ BÁO TỔNG GIỜ · MODEL GỐC';
+  $('maeHeading').textContent=newConfigured?'MAE · MODEL BỐN BƯỚC · NHÃN ĐÃ CÓ':'MAE · MODEL GỐC · NHÃN ĐÃ CÓ';
+  if(newConfigured){
+    $('prediction').textContent=q?`${number(q.forecast_sum_of_interval_points_kWh)} kWh`:'—';
+    const recent=data.metrics?.probabilistic_metrics?.point_hour;
+    $('mae').textContent=recent?.rows?`${number(recent.mae_kWh)} kWh`:'—';
+    $('scored').textContent=recent?`${recent.rows} dự báo đã có đủ số đo thực tế`:'Chưa có kết quả đối chiếu';
+    $('alertHeading').textContent='Cảnh báo phân vị · ngưỡng nghiên cứu';
+    $('alertDescription').textContent=q?`Biên trên sau calibration > p95 TRAIN ${number(q.research_alert.threshold_kWh)} kWh. Không phải giới hạn hợp đồng.`:'Chưa có dự báo phân vị hợp lệ.';
+    $('alertStatus').textContent=q?q.research_alert.alert?'Đề nghị kiểm tra khoảng tiêu thụ cao':'Biên trên chưa vượt ngưỡng nghiên cứu':'Không có cảnh báo phân vị hợp lệ';
+    $('recommendation').textContent=q?'Người phụ trách đối chiếu đồng hồ và context vận hành trước khi quyết định. Không điều khiển thiết bị hoặc suy ra tải an toàn.':'Kiểm dữ liệu/model phân vị trước khi sử dụng.';
+  }
   $('pending').textContent=m?m.pending:'—';$('total').textContent=`${data.metrics?.forecasts||0} dự báo`;
   $('rollingMae').textContent=m?.last_24h_by_forecast_end.rows?`${number(m.last_24h_by_forecast_end.mae_kWh)} kWh`:'—';
   $('rollingBias').textContent=m?.last_24h_by_forecast_end.rows?`${number(m.last_24h_by_forecast_end.bias_kWh)} kWh`:'—';
@@ -60,18 +123,21 @@ function render(data){
   $('invalidRate').textContent=quality?.forecast_attempts?`${quality.invalid_history_attempts}/${quality.forecast_attempts} (${number(100*quality.invalid_history_rate)}%)`:'—';
   const usageWatch=response?.usage_watch, performanceWatch=data.metrics?.performance_watch;
   $('reviewStatus').textContent=performanceWatch?.status==='needs_review' || usageWatch?.status==='needs_review'?'Cần rà soát dữ liệu và hiệu năng':'Chưa có tín hiệu rà soát / chưa đủ nhãn';
-  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Nhãn đủ cho kiểm hai tuần: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344}. Các ngưỡng là heuristic, không chẩn đoán drift hoặc tự retrain.`;
+  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Giám sát MAE hai tuần của model tổng giờ cũ: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344} nhãn. Độ phủ model phân vị mới ở bảng bên dưới. Các ngưỡng là heuristic, không chẩn đoán drift hoặc tự retrain.`;
   $('decisionContext').textContent=response?`Quan sát lúc ${timestamp(data.clock)} · ${statuses[response.status]||response.status}. Dừng phát lại trước khi ghi nhận.`:'Không có quan sát hiện tại để ghi nhận.';
   $('decisions').replaceChildren();
   for(const d of data.decisions){
     const li=document.createElement('li');
-    const saved=d.context.decision;
+    const savedForecast=d.context.probabilistic;
+    const saved=savedForecast?.research_alert??d.context.decision;
     const savedAlert=saved?.alert===true?'Đề nghị kiểm tra':saved?.alert===false?'Dưới ngưỡng nghiên cứu':'Không có cảnh báo hợp lệ';
-    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · Dự báo: ${number(d.context.predicted_kWh)} kWh · ${savedAlert}`;
+    li.textContent=`${timestamp(d.replay_time)} · ${d.operator} · ${decisionLabels[d.action]}\n${d.note}\nTrạng thái khi ghi: ${statuses[d.context.status]||d.context.status} · ${savedForecast?'Tổng bốn dự báo mới':'Model tổng giờ cũ'}: ${number(savedForecast?.forecast_sum_of_interval_points_kWh??d.context.predicted_kWh)} kWh · ${savedAlert}`;
     $('decisions').append(li);
   }
   if(!data.decisions.length){const li=document.createElement('li');li.textContent='Chưa có ghi nhận trong phiên.';$('decisions').append(li);}
   chart(data.history);
+  renderProbabilistic(data);
+  $('rows').closest('article').querySelector('h2').textContent=newConfigured?'Đối chiếu model tổng giờ cũ':'Dự báo và kết quả đối chiếu';
   $('rows').replaceChildren();
   for(const r of data.forecasts){const tr=document.createElement('tr');const label=r.label_status==='waiting_for_observations'?'Đã đủ giờ · thiếu bản đo':r.actual==null?'Chờ đủ 60 phút':'Đã đối chiếu';for(const v of [timestamp(r.issue_time),timestamp(r.forecast_end),number(r.prediction),number(r.actual),number(r.error),r.decision?.alert===true?'Kiểm tra':r.decision?.alert===false?'Dưới ngưỡng':'—',label]){const td=document.createElement('td');td.textContent=v;tr.append(td);}tr.lastChild.className=r.actual==null?'waiting':'available';$('rows').append(tr);}
   if(!data.forecasts.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent='Chưa có dự báo. Mở phiên hoặc kiểm tra trạng thái xử lý.';tr.append(td);$('rows').append(tr);}
@@ -79,7 +145,7 @@ function render(data){
   $('ram').textContent=p?.process_rss_bytes!=null?`${number(p.process_rss_bytes/1048576)} MB`:'—';
   $('cpu').textContent=p?`${number(p.process_cpu_ms)} ms`:'—';$('backend').textContent=p?`${number(p.backend_ms)} ms`:'—';
   $('p95').textContent=p?.session_backend_p95_ms!=null?`${number(p.session_backend_p95_ms)} ms (${p.timed_actions} bước)`:'—';
-  $('modelsize').textContent=p?.model_bytes!=null?`${number(p.model_bytes/1024)} KB`:'—';
+  $('modelsize').textContent=p?.model_bytes!=null?`${number((p.total_model_bytes??p.model_bytes)/1024)} KB`:'—';
   $('errors').replaceChildren();
   for(const e of data.errors){const li=document.createElement('li');li.textContent=`${timestamp(e.issue_time)} · ${statuses[e.status]||e.status}: ${e.detail}`;$('errors').append(li);}
   if(!data.errors.length){const li=document.createElement('li');li.textContent='Chưa ghi nhận lỗi trong phiên.';$('errors').append(li);}
@@ -100,6 +166,7 @@ async function request(path,body){
 async function tick(){if(!playing)return;await request('/api/step',{});if(playing)timer=setTimeout(tick,Number($('speed').value));}
 $('reset').addEventListener('click',async()=>{stop();if(!$('start').checkValidity()){$('start').reportValidity();return;}await request('/api/reset',{start:$('start').value});});
 $('step').addEventListener('click',()=>request('/api/step',{}));
+$('forecastOrigin').addEventListener('change',()=>{selectedOrigin=$('forecastOrigin').value;renderIntervals();});
 $('play').addEventListener('click',()=>{if(playing){stop();return;}playing=true;controls();tick();});
 for(const id of ['operator','decisionNote']) $(id).addEventListener('input',()=>{decisionToken=null;$('decisionFeedback').textContent='';});
 for(const action of Object.keys(decisionLabels)) $(action).addEventListener('click',async()=>{

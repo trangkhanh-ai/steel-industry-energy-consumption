@@ -170,11 +170,12 @@ Cài `python -m pip install -r requirements-notebooks.txt`, mở bằng VS Code/
 | [01 · Data preparation](notebooks/01_data_preparation.ipynb) | 3B, chất lượng, feature/split, EDA TRAIN; dùng hàm source chính |
 | [05 · Four-step forecasting](notebooks/05_four_step_quantile_forecasting.ipynb) | **Bản hiện tại:** baseline/Ridge/HGB, quantile, prediction, actual trễ |
 | [06 · Warning cases](notebooks/06_warning_case_studies.ipynb) | Ca FN 08:15/TP 09:00 ngày 22/11 Khánh đề xuất; đối chiếu hai bản |
+| [07 · Error analysis](notebooks/07_error_analysis.ipynb) | Đánh giá cũ/mới, ca lỗi thật, kết quả theo tháng và giới hạn công nghiệp |
 | [02 · Hourly evaluation](notebooks/02_steel_modeling_evaluation.ipynb) | Đánh giá tổng giờ cũ 11/10; không ghi lại policy |
 | [03 · Duy hourly study](notebooks/03_duy_steel_data_and_models.ipynb) | Dữ liệu, leaderboard validation và inference tổng giờ cũ |
 | [04 · Khánh study](notebooks/04_khanh_lightgbm_study.ipynb) | LightGBM 15/19 feature, tách khỏi bản chính |
 
-Chạy cả sáu notebook bằng đúng Python đang dùng, lưu kết quả vào folder mới và kiểm CSV/model/policy bất biến:
+Chạy cả bảy notebook bằng đúng Python đang dùng, lưu kết quả vào folder mới và kiểm CSV/model/policy bất biến:
 
 ```powershell
 .venv\Scripts\python -X utf8 -m scripts.run_notebooks --output-dir reports/steel/local_notebook_check_01
@@ -194,12 +195,30 @@ Validation LightGBM MAE **14,558653 → 14,087299 kWh** (giảm khoảng 3,24%).
 
 ## Bản đồ source code
 
+### Phân tích lỗi và độ ổn định trên dữ liệu thật
+
+```powershell
+.venv\Scripts\python -X utf8 -m scripts.analyze_forecast_errors --output-dir reports/steel/local_error_analysis_01
+```
+
+[Kết quả kiểm lại ngày 15/10](reports/steel/error_analysis_2026-10-15/verification.json) xác nhận nhãn với CSV gốc, tái tính prediction/buffer của đối chứng cũ, kiểm parity online cho bốn ca và đối chiếu với lần train mới. Model và ngưỡng không được chỉnh theo TEST.
+
+- 08:15 ngày 22/11: FN ở bản cũ, **TP ở bản mới**. Actual tổng giờ 486,25 kWh khác Usage tại origin 41,51 kWh.
+- 19:30 ngày 16/11: bản mới vẫn FN, actual tổng giờ 393,05 kWh nhưng biên trên 263,85 kWh.
+- MAE tổng bốn dự báo tháng 11/12: **19,3416 / 12,8921 kWh**; coverage **80,10% / 76,62%**. MAE thấp hơn chưa bảo đảm độ phủ tốt hơn.
+- [Bảng cảnh báo](reports/steel/error_analysis_2026-10-15/alert_comparison.csv), [ca minh họa](reports/steel/error_analysis_2026-10-15/case_studies.csv), [theo tháng](reports/steel/error_analysis_2026-10-15/monthly_metrics.csv). Những ca chọn để giải thích không thay thế metric trên cả TEST.
+- [Phạm vi công nghiệp](reports/steel/error_analysis_2026-10-15/industrial_scope.json): chưa đo điện/tiền tiết kiệm, lead time thiết bị hoặc số lượt kiểm tra thực; không có điều khiển tự động.
+
+![Phân tích cảnh báo với nhãn giờ tới lấy từ CSV thật](reports/steel/error_analysis_2026-10-15/error_cases.png)
+
+### Các thư mục và module
+
 ```text
 src/steel/       Logic xử lý, feature, model, policy, evaluation, monitoring
 scripts/         Lệnh train/audit/notebook/kiểm chứng/server
 tests/           Kiểm dữ liệu, leakage, hash, actual trễ, replay, policy
 web/steel_demo/  HTML / CSS / JavaScript
-notebooks/       Sáu notebook; artifact Khánh riêng
+notebooks/       Bảy notebook; artifact Khánh riêng
 data/steel/      CSV gốc, processed cho đối chứng/nghiên cứu
 reports/steel/   Model, prediction CSV, metric JSON, hình thực nghiệm
 assets/          Ảnh README/dashboard từ dữ liệu và UI thật

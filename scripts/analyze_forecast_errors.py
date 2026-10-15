@@ -11,6 +11,7 @@ import joblib
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
 from threadpoolctl import threadpool_limits
@@ -86,10 +87,9 @@ def compare_reproduction(published, reproduced):
 
 
 def draw_cases(frame, threshold, folder):
-    fig, axes = plt.subplots(2, 1, figsize=(11, 6))
+    fig, axes = plt.subplots(2, 1, figsize=(7, 5))
     for ax, center, title in zip(axes, ('2018-11-22 08:15', '2018-11-16 19:30'),
-            ('22 Nov — legacy miss detected by new quantile policy',
-             '16 Nov — new policy still misses a high-energy hour')):
+            ('22 Nov: legacy FN becomes TP', '16 Nov: current policy still has an FN')):
         time = pd.Timestamp(center)
         view = frame.loc[frame.issue_time.between(time-pd.Timedelta(hours=1), time+pd.Timedelta(hours=1))]
         ax.plot(view.issue_time, view.hour_total_actual_kWh, color='black', marker='o', markersize=3,
@@ -98,9 +98,12 @@ def draw_cases(frame, threshold, folder):
         ax.plot(view.issue_time, view.hour_total_calibrated_upper_kWh, color='#0f766e', label='New calibrated upper')
         ax.axhline(threshold, color='#b91c1c', linestyle='--', label='TRAIN p95 research threshold')
         ax.axvline(time, color='#94a3b8', linestyle=':')
-        ax.set(title=title, ylabel='Next-hour energy (kWh)', xlabel='Forecast origin')
-        ax.legend(fontsize=7, loc='best')
-    fig.autofmt_xdate(); fig.tight_layout()
+        ax.set(title=title, ylabel='Next-hour energy (kWh)')
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax.tick_params(labelsize=9)
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, fontsize=8, loc='lower center', ncol=2)
+    fig.tight_layout(rect=(0, .11, 1, 1))
     fig.savefig(folder/'error_cases.png', dpi=160); plt.close(fig)
 
 

@@ -212,7 +212,7 @@ Cài `python -m pip install -r requirements-notebooks.txt`, mở bằng VS Code/
 | [03 · Duy hourly study](notebooks/03_duy_steel_data_and_models.ipynb) | Dữ liệu, leaderboard validation và inference tổng giờ cũ |
 | [04 · Khánh study](notebooks/04_khanh_lightgbm_study.ipynb) | LightGBM 15/19 feature, tách khỏi bản chính |
 
-Chạy cả tám notebook bằng đúng Python đang dùng, lưu kết quả vào folder mới và kiểm CSV/model/policy bất biến:
+Đã kiểm đủ tám notebook; [biên bản thực thi và số cell chính xác](reports/steel/notebook_verification_2026-10-16.json). Chạy cả tám notebook bằng đúng Python đang dùng, lưu kết quả vào folder mới và kiểm CSV/model/policy bất biến:
 
 ```powershell
 .venv\Scripts\python -X utf8 -m scripts.run_notebooks --output-dir reports/steel/local_notebook_check_01

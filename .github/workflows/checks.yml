@@ -32,6 +32,8 @@ jobs:
       - run: python -m scripts.check_duy_handoff --run-dir reports/steel/duy_2026-10-02
       - run: python -m scripts.check_steel_demo_environment
       - run: python -m scripts.check_probabilistic_run --run-dir reports/steel/release_2026-10-14 --output-file outputs/ci_probabilistic_verification.json
+      - run: python -m scripts.check_probabilistic_run --run-dir reports/steel/release_2026-10-16 --output-file outputs/ci_current_verification.json
+      - run: python -m scripts.show_results
 
   notebooks:
     needs: core

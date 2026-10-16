@@ -117,12 +117,13 @@ class ProbabilisticIntegrationTests(unittest.TestCase):
             ProbabilisticForecaster(RUN, 'wrong-source')
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
-            for name in ('manifest.json', 'protocol.json', 'forecast_bundle.joblib'):
+            for name in ('manifest.json', 'protocol.json', 'forecast_bundle.joblib', 'monitoring_reference.json'):
                 shutil.copy2(RUN/name, folder/name)
             original = json.loads((folder/'manifest.json').read_text())
             for field, value in (('valid_from', '2018-10-01T00:00:00'), ('coverage_guaranteed', True),
                                  ('protocol_sha256', 'wrong-hash'), ('model_sha256', 'wrong-hash'),
-                                 ('calibration_margins_kWh', {'hour_total': -1, 'max_interval': 0})):
+                                 ('calibration_margins_kWh', {'hour_total': -1, 'max_interval': 0}),
+                                 ('monitoring_reference_sha256', 'wrong-hash'), ('point_loss', 'squared_error')):
                 with self.subTest(field=field):
                     (folder/'manifest.json').write_text(json.dumps({**original, field: value}))
                     with self.assertRaises(ValueError):
@@ -135,6 +136,10 @@ class ProbabilisticIntegrationTests(unittest.TestCase):
                 initial = demo.dispatch('reset', '2018-11-01T08:00')
                 forecast = initial['current_forecast']['probabilistic']
                 self.assertIsNotNone(forecast)
+                watch = initial['metrics']['probabilistic_metrics']['performance_watch']
+                self.assertEqual(watch['status'], 'insufficient_labels')
+                self.assertEqual(watch['available_labels'], 0)
+                self.assertEqual(watch['model_sha256'], forecast['model_sha256'])
                 self.assertEqual(initial['probabilistic_info']['model_sha256'], forecast['model_sha256'])
                 demo.dispatch('decision', decision=dict(session=initial['session'], clock=initial['clock'],
                     request_id=initial['current_forecast']['request_id'], operator='Unit test', action='inspect',
@@ -150,6 +155,12 @@ class ProbabilisticIntegrationTests(unittest.TestCase):
                 self.assertEqual(full['alert_metrics_status'], 'computed')
                 self.assertEqual(state['metrics']['alert_metrics_status'], 'available_on_demand')
                 self.assertEqual(full['probabilistic_metrics']['rows'], 1)
+                self.assertEqual(full['probabilistic_metrics']['performance_watch']['available_labels'], 1)
+                self.assertEqual(full['probabilistic_metrics']['performance_watch']['required_labels'], 1344)
+                self.assertEqual(full, demo.monitor.snapshot(demo.current))
+                earlier = demo.monitor.snapshot(pd.Timestamp(initial['clock']))
+                self.assertEqual(earlier['probabilistic_metrics']['rows'], 0)
+                self.assertEqual(earlier['probabilistic_metrics']['performance_watch']['available_labels'], 0)
                 self.assertEqual(full['probabilistic_metrics']['hour_total']['rows'], 1)
                 self.assertEqual(state['metrics']['probabilistic_metrics']['point_hour']['rows'], 1)
                 self.assertAlmostEqual(state['metrics']['probabilistic_metrics']['point_hour']['mae_kWh'],

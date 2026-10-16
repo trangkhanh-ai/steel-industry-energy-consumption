@@ -121,9 +121,9 @@ function render(data){
   $('rollingCount').textContent=m?m.last_24h_by_forecast_end.rows:'—';
   const quality=data.metrics?.input_quality;
   $('invalidRate').textContent=quality?.forecast_attempts?`${quality.invalid_history_attempts}/${quality.forecast_attempts} (${number(100*quality.invalid_history_rate)}%)`:'—';
-  const usageWatch=response?.usage_watch, performanceWatch=data.metrics?.performance_watch;
+  const usageWatch=response?.usage_watch, performanceWatch=data.metrics?.probabilistic_metrics?.performance_watch??data.metrics?.performance_watch;
   $('reviewStatus').textContent=performanceWatch?.status==='needs_review' || usageWatch?.status==='needs_review'?'Cần rà soát dữ liệu và hiệu năng':'Chưa có tín hiệu rà soát / chưa đủ nhãn';
-  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Giám sát MAE hai tuần của model tổng giờ cũ: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344} nhãn. Độ phủ model phân vị mới ở bảng bên dưới. Các ngưỡng là heuristic, không chẩn đoán drift hoặc tự retrain.`;
+  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Giám sát ${data.metrics?.probabilistic_metrics?.performance_watch?'MAE và độ phủ model mới':'MAE model đối chứng cũ'}: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344} nhãn đã đủ số đo. Trạng thái: ${performanceWatch?.status??'chưa có reference'}. Reference từ calibration tháng 10, theo đúng model hash. Ngưỡng heuristic; người phụ trách rà soát, không tự retrain.`;
   $('decisionContext').textContent=response?`Quan sát lúc ${timestamp(data.clock)} · ${statuses[response.status]||response.status}. Dừng phát lại trước khi ghi nhận.`:'Không có quan sát hiện tại để ghi nhận.';
   $('decisions').replaceChildren();
   for(const d of data.decisions){

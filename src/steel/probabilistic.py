@@ -16,7 +16,7 @@ from .preprocessing import BASE_FEATURES, FREQUENCY, sha256_file
 QUANTILES = (0.1, 0.5, 0.9)
 TARGETS = tuple(f'usage_next_{15*k}m_kWh' for k in range(1, 5))
 CONTRACT = 'steel_measured_energy_4_steps_quantiles_v1'
-DEFAULT_PROBABILISTIC_SUBDIR = Path('reports/steel/release_2026-10-14')
+DEFAULT_PROBABILISTIC_SUBDIR = Path('reports/steel/release_2026-10-16')
 
 
 def future_measurements(raw, origins):
@@ -125,6 +125,9 @@ class ProbabilisticForecaster:
             raise ValueError('Phương pháp point không khớp manifest')
         if m['point_method'] == 'hgb' and len(self.bundle['point_model']) != 4:
             raise ValueError('Cần bốn model point cho bốn bước')
+        if m['point_method'] == 'hgb' and 'point_loss' in m:
+            if m['point_loss'] not in ('squared_error', 'absolute_error') or any(model.loss != m['point_loss'] for model in self.bundle['point_model']):
+                raise ValueError('Loss point không khớp model đã khai báo')
         for target in ('hour_total', 'max_interval'):
             models = self.bundle['quantile_models'][target]
             if len(models) != 3:
@@ -133,6 +136,15 @@ class ProbabilisticForecaster:
                 if model.loss != 'quantile' or model.quantile != alpha or model.n_features_in_ != len(BASE_FEATURES):
                     raise ValueError('Model không có đúng loss/phân vị/feature đã khai báo')
         self.valid_from = pd.Timestamp(m['valid_from'])
+        self.monitoring_reference = None
+        if 'monitoring_reference_file' in m:
+            reference_path = (folder/m['monitoring_reference_file']).resolve()
+            if not reference_path.is_relative_to(folder) or sha256_file(reference_path) != m['monitoring_reference_sha256']:
+                raise ValueError('Reference giám sát không khớp checksum/đường dẫn')
+            reference = json.loads(reference_path.read_text(encoding='utf-8'))
+            if reference['model_sha256'] != m['model_sha256'] or reference['source_sha256'] != source_sha256:
+                raise ValueError('Reference giám sát thuộc model/nguồn khác')
+            self.monitoring_reference = reference
         self.thread_controller = ThreadpoolController()
 
     def predict_features(self, features, issue_time):

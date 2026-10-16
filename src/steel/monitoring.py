@@ -60,6 +60,9 @@ class ForecastMonitor:
             );
         """)
         self.db.execute("CREATE TABLE IF NOT EXISTS session_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.db.execute('CREATE INDEX IF NOT EXISTS forecast_pending ON forecasts(forecast_end) WHERE actual_kWh IS NULL')
+        self._forecast_contexts = {}
+        self._context_data_version = self.db.execute('PRAGMA data_version').fetchone()[0]
         self.model = None
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(forecasts)")}
         if "decision_json" not in columns:
@@ -288,7 +291,20 @@ class ForecastMonitor:
     def snapshot(self, as_of, include_alert_metrics=True) -> dict:
         """Metrics use only labels recorded by as_of; 24h is a display window."""
         now = valid_time(as_of)
-        frame = pd.read_sql_query("SELECT * FROM forecasts WHERE issue_time<=?", self.db, params=(now.isoformat(),))
+        # JSON dự báo bất biến: chỉ đọc/giải mã một lần mỗi id. Actual vẫn đọc
+        # lại và lọc evaluated_as_of, nên cache không làm nhãn xuất hiện sớm.
+        version = self.db.execute('PRAGMA data_version').fetchone()[0]
+        if version != self._context_data_version:
+            self._forecast_contexts.clear()  # Một connection khác đã ghi DB.
+            self._context_data_version = version
+        last = max(self._forecast_contexts, default=0)
+        for row in self.db.execute('SELECT id,decision_json,probabilistic_json FROM forecasts WHERE id>?', (last,)):
+            self._forecast_contexts[row['id']] = (
+                json.loads(row['decision_json']) if row['decision_json'] else {},
+                json.loads(row['probabilistic_json']) if row['probabilistic_json'] else None)
+        frame = pd.read_sql_query('''SELECT id,issue_time,forecast_start,forecast_end,
+            predicted_kWh,model_sha256,model_configuration,actual_kWh,evaluated_as_of
+            FROM forecasts WHERE issue_time<=?''', self.db, params=(now.isoformat(),))
         result = {"as_of": now.isoformat(), "forecasts": len(frame), "models": [],
                   "request_counts_all_logged": dict(self.db.execute("SELECT status,COUNT(*) FROM requests GROUP BY status").fetchall()),
                   "policy": "monitoring_only_no_threshold_or_automatic_action"}
@@ -318,7 +334,7 @@ class ForecastMonitor:
             result["models"].append({"model_sha256": sha, "model_configuration": all_rows.model_configuration.iloc[0],
                                      "pending": len(all_rows)-len(part), "all_matured": errors(part), "last_24h_by_forecast_end": errors(recent)})
             if self.policy is not None and sha == self.policy.data["model_sha256"]:
-                same_policy = part.decision_json.map(lambda value: bool(value) and json.loads(value).get("policy_sha256") == self.policy.sha256)
+                same_policy = part.id.map(lambda value: self._forecast_contexts[value][0].get('policy_sha256') == self.policy.sha256)
                 eligible = part.loc[same_policy]
                 result["performance_watch"] = performance_watch(eligible, self.policy.reference_mae)
                 result["alert_metrics"] = evaluate_alerts(eligible.actual_kWh, eligible.predicted_kWh,
@@ -329,13 +345,17 @@ class ForecastMonitor:
             from .probabilistic import interval_metrics, research_alert_metrics
             records = []
             for row in scored.itertuples():
-                saved = json.loads(row.probabilistic_json) if row.probabilistic_json else None
+                saved = self._forecast_contexts[row.id][1]
                 if saved and saved['model_sha256'] == self.probabilistic.metadata['model_sha256']:
                     records.append((row.issue_time, row.actual_kWh, saved))
             result['probabilistic_metrics'] = {'rows': len(records), 'hour_total': None,
                 'point_hour': {'rows': 0, 'mae_kWh': None, 'bias_kWh': None},
                 'model_sha256': self.probabilistic.metadata['model_sha256'],
                 'research_alert': None, 'alert_metrics_status': 'computed' if include_alert_metrics else 'available_on_demand'}
+            reference = self.probabilistic.monitoring_reference
+            if reference:
+                from .reliability import reliability_watch
+                result['probabilistic_metrics']['performance_watch'] = reliability_watch([], [], [], [], [], reference)
             if records:
                 times = [r[0] for r in records]
                 actual = np.array([r[1] for r in records])
@@ -346,6 +366,9 @@ class ForecastMonitor:
                 margin = self.probabilistic.metadata['calibration_margins_kWh']['hour_total']
                 threshold = self.probabilistic.metadata['train_research_thresholds_kWh']['hour_total']
                 result['probabilistic_metrics']['hour_total'] = interval_metrics(actual, q, margin)
+                if reference:
+                    result['probabilistic_metrics']['performance_watch'] = reliability_watch(
+                        times, actual, points, np.maximum(q[:, 0]-margin, 0), q[:, 2]+margin, reference)
                 if include_alert_metrics:
                     result['probabilistic_metrics']['research_alert'] = research_alert_metrics(actual, q, times, threshold, margin)
         return result

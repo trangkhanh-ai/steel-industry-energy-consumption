@@ -116,6 +116,8 @@ def run(output, run_dir=ROOT / DEFAULT_PROBABILISTIC_SUBDIR, reproduction_dir=No
     rows = build_supervised_rows(raw)
     rows.loc[:, list(BASE_FEATURES)] = features.to_numpy()
     splits, _ = split_supervised_rows(rows)
+    from scripts.run_improvement_study import diagnostics
+    diagnostics(output, splits, run_dir)
     current = pd.read_csv(run_dir/'test_predictions.csv', parse_dates=['issue_time'])
     actual = validate_predictions(raw, current, splits['test'].observation_time)
     metadata = json.loads((run_dir/'manifest.json').read_text(encoding='utf-8'))

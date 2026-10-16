@@ -47,7 +47,7 @@ def errors(y, predicted):
             'sum_hour_rmse_kWh': float(root_mean_squared_error(y.sum(axis=1), predicted.sum(axis=1)))}
 
 
-def run(output):
+def run(output, point_loss='squared_error'):
     if output.exists():
         raise FileExistsError('Chọn thư mục run mới; không ghi đè kết quả cũ')
     raw, audit = load_official_raw(ROOT/'data/steel/raw/Steel_industry_data.csv')
@@ -67,6 +67,7 @@ def run(output):
         'point_candidates': ['last_value', 'ridge', 'hgb'],
         'point_selection': 'lowest mean MAE over four outputs on September; ties prefer last_value',
         'ridge': {'alpha': 1, 'scaler_fit': 'train only'}, 'hgb': PARAMETERS,
+        'point_loss': point_loss, 'quantile_loss': 'quantile',
         'quantiles': list(QUANTILES), 'quantile_targets': ['hour_total', 'max_interval'],
         'quantile_postprocessing': 'clip nonnegative and sort three estimates; report crossings',
         'calibration': 'October only; nonnegative CQR-style margin; nominal 80%, no TS coverage guarantee',
@@ -84,7 +85,7 @@ def run(output):
         ridge = make_pipeline(StandardScaler(), Ridge(alpha=1))
         ridge.fit(x['train'], y['train'])
         point_bundles['ridge'] = {'point_method': 'ridge', 'point_model': ridge}
-        hgb = [HistGradientBoostingRegressor(**PARAMETERS).fit(x['train'], y['train'][:, i]) for i in range(4)]
+        hgb = [HistGradientBoostingRegressor(loss=point_loss, **PARAMETERS).fit(x['train'], y['train'][:, i]) for i in range(4)]
         point_bundles['hgb'] = {'point_method': 'hgb', 'point_model': hgb}
         validation = {name: errors(y['validation'], point_prediction(bundle, x['validation']))
                       for name, bundle in point_bundles.items()}
@@ -115,6 +116,7 @@ def run(output):
                     'valid_from': '2018-11-01T00:00:00', 'calibration_margins_kWh': margins,
                     'train_research_thresholds_kWh': thresholds,
                     'nominal_central_coverage': .8, 'coverage_guaranteed': False,
+                    'point_loss': point_loss,
                     'fit_seconds': fit_seconds, 'protocol_sha256': sha256_file(output/'protocol.json')}
         save_json(output/'manifest.json', manifest)
         # Chỉ scoring test sau khi model, margin, thresholds và manifest đã khóa.
@@ -160,6 +162,19 @@ def run(output):
                     ax.fill_between(times, view[f'{target}_p10_kWh'], view[f'{target}_p90_kWh'], alpha=.2, label='Raw P10-P90 estimates')
                     ax.set_ylabel('kWh');ax.set_title(title);ax.legend(fontsize=8)
                 fig.autofmt_xdate();fig.tight_layout();fig.savefig(output/'figures/test_quantiles.png', dpi=160);plt.close(fig)
+        # Giám sát chỉ lấy reference CAL; không dùng TEST làm chuẩn vận hành.
+        cal_csv = pd.read_csv(output/'calibration_predictions.csv')
+        cal_point = cal_csv[[f'predicted_{15*k}m_kWh' for k in range(1, 5)]].sum(axis=1)
+        reference = {'model_sha256': manifest['model_sha256'], 'source_sha256': audit['source_sha256'],
+            'reference_period': '2018-10 calibration; no TEST reference', 'rows': len(cal_csv),
+            'point_hour_mae_kWh': float(np.abs(cal_point-cal_csv.hour_total_actual_kWh).mean()),
+            'central_coverage': float(cal_csv.hour_total_actual_kWh.between(cal_csv.hour_total_calibrated_lower_kWh, cal_csv.hour_total_calibrated_upper_kWh).mean()),
+            'window_labels': 672, 'mae_factor': 1.2, 'coverage_drop': .10,
+            'automatic_retraining': False, 'heuristic_only': True}
+        save_json(output/'monitoring_reference.json', reference)
+        manifest.update(monitoring_reference_file='monitoring_reference.json',
+                        monitoring_reference_sha256=sha256_file(output/'monitoring_reference.json'))
+        save_json(output/'manifest.json', manifest)
         save_json(output/'metrics.json', metrics)
         rows = []
         for name, candidate in point_bundles.items():
@@ -175,4 +190,6 @@ def run(output):
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, required=True)
-    run(parser.parse_args().output_dir.resolve())
+    parser.add_argument('--point-loss', choices=['squared_error', 'absolute_error'], default='squared_error')
+    args = parser.parse_args()
+    run(args.output_dir.resolve(), args.point_loss)

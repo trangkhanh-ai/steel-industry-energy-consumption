@@ -81,7 +81,7 @@ function render(data){
   current=data; $('clock').textContent=data.clock?`${timestamp(data.clock)} / 2018`:'Chưa mở phiên';
   $('start').min=data.first_start.slice(0,16); $('start').max=data.last_start.slice(0,16);
   if($('start').value < $('start').min || $('start').value > $('start').max) $('start').value=$('start').min;
-  $('periodNote').textContent=`Phát lại từ ${timestamp(data.first_start)} đến ${timestamp(data.end)} / 2018. Actual chỉ xuất hiện sau đủ 60 phút và đủ bốn bản đo.`;
+  $('periodNote').textContent=`Phát lại ${timestamp(data.first_start)}–${timestamp(data.end)} / 2018. Số đo đến từng 15 phút; tổng giờ cần đủ bốn bản đo.`;
   $('sessionNote').textContent=data.session?'Đồng hồ dữ liệu · mỗi bước 15 phút':'Chọn một thời điểm để bắt đầu.';
   const response=data.current_forecast, forecast=response?.prediction;
   $('prediction').textContent=forecast?`${number(forecast.predicted_next_60m_kWh)} kWh`:'—';
@@ -113,7 +113,7 @@ function render(data){
     $('alertHeading').textContent='Cảnh báo phân vị · ngưỡng nghiên cứu';
     $('alertDescription').textContent=q?`Biên trên sau calibration > p95 TRAIN ${number(q.research_alert.threshold_kWh)} kWh. Không phải giới hạn hợp đồng.`:'Chưa có dự báo phân vị hợp lệ.';
     $('alertStatus').textContent=q?q.research_alert.alert?'Đề nghị kiểm tra khoảng tiêu thụ cao':'Biên trên chưa vượt ngưỡng nghiên cứu':'Không có cảnh báo phân vị hợp lệ';
-    $('recommendation').textContent=q?'Người phụ trách đối chiếu đồng hồ và context vận hành trước khi quyết định. Không điều khiển thiết bị hoặc suy ra tải an toàn.':'Kiểm dữ liệu/model phân vị trước khi sử dụng.';
+    $('recommendation').textContent=q?'Người phụ trách đối chiếu đồng hồ và thông tin vận hành trước khi quyết định. Không điều khiển thiết bị hoặc suy ra tải an toàn.':'Kiểm dữ liệu/model phân vị trước khi sử dụng.';
   }
   $('pending').textContent=m?m.pending:'—';$('total').textContent=`${data.metrics?.forecasts||0} dự báo`;
   $('rollingMae').textContent=m?.last_24h_by_forecast_end.rows?`${number(m.last_24h_by_forecast_end.mae_kWh)} kWh`:'—';
@@ -122,8 +122,14 @@ function render(data){
   const quality=data.metrics?.input_quality;
   $('invalidRate').textContent=quality?.forecast_attempts?`${quality.invalid_history_attempts}/${quality.forecast_attempts} (${number(100*quality.invalid_history_rate)}%)`:'—';
   const usageWatch=response?.usage_watch, performanceWatch=data.metrics?.probabilistic_metrics?.performance_watch??data.metrics?.performance_watch;
-  $('reviewStatus').textContent=performanceWatch?.status==='needs_review' || usageWatch?.status==='needs_review'?'Cần rà soát dữ liệu và hiệu năng':'Chưa có tín hiệu rà soát / chưa đủ nhãn';
-  $('reviewDetail').textContent=`PSI 7 ngày: ${number(usageWatch?.psi)}. Giám sát ${data.metrics?.probabilistic_metrics?.performance_watch?'MAE và độ phủ model mới':'MAE model đối chứng cũ'}: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344} nhãn đã đủ số đo. Trạng thái: ${performanceWatch?.status??'chưa có reference'}. Reference từ calibration tháng 10, theo đúng model hash. Ngưỡng heuristic; người phụ trách rà soát, không tự retrain.`;
+  const watchLabels={insufficient_labels:'Chưa đủ nhãn để đánh giá hai tuần',non_contiguous_labels:'Nhãn bị đứt nhịp · cần kiểm dữ liệu',needs_review:'Hiệu năng cần được rà soát',no_review_trigger:'Chưa chạm ngưỡng rà soát hiệu năng'};
+  const watchStatus=watchLabels[performanceWatch?.status]||'Chưa có dữ liệu giám sát hiệu năng';
+  const usageStatus=usageWatch?.status==='needs_review'?'Phân bố điện năng cần rà soát':null;
+  $('reviewStatus').textContent=usageStatus?`${usageStatus} · ${watchStatus.toLowerCase()}`:watchStatus;
+  const weeks=performanceWatch?.weekly_mae_kWh;
+  const coverage=performanceWatch?.weekly_coverage;
+  const weeklyDetail=weeks?` MAE hai tuần: ${weeks.map(number).join(' / ')} kWh.${coverage?` Độ phủ: ${coverage.map(v=>`${number(100*v)}%`).join(' / ')}.`:''}`:'';
+  $('reviewDetail').textContent=`PSI 7 ngày so với TRAIN: ${number(usageWatch?.psi)}. Giám sát ${data.metrics?.probabilistic_metrics?.performance_watch?'MAE và độ phủ model mới':'MAE model đối chứng cũ'}: ${performanceWatch?.available_labels||0}/${performanceWatch?.required_labels||1344} nhãn đã đủ số đo; cần hai cửa sổ liên tục, mỗi cửa sổ 672 nhãn.${weeklyDetail} Mức tham chiếu hiệu năng từ calibration tháng 10, đúng phiên bản model. Đây là tín hiệu để con người kiểm tra, không kết luận máy hỏng hoặc tự huấn luyện lại.`;
   $('decisionContext').textContent=response?`Quan sát lúc ${timestamp(data.clock)} · ${statuses[response.status]||response.status}. Dừng phát lại trước khi ghi nhận.`:'Không có quan sát hiện tại để ghi nhận.';
   $('decisions').replaceChildren();
   for(const d of data.decisions){

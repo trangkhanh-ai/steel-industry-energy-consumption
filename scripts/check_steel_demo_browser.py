@@ -52,6 +52,7 @@ def run(url, output):
 
         initial = start(initial_start)
         no_future(initial)
+        expect(page.locator('#periodNote')).to_contain_text('Số đo đến từng 15 phút; tổng giờ cần đủ bốn bản đo')
         assert initial["forecasts"][0]["actual"] is None
         quantiles_enabled = initial.get('probabilistic_info', {}).get('status') == 'configured' if initial.get('probabilistic_info') else False
         if quantiles_enabled:
@@ -61,6 +62,8 @@ def run(url, output):
             expect(page.locator('#predictionHeading')).to_contain_text('MODEL MỚI')
             expect(page.locator('#alertHeading')).to_contain_text('phân vị')
             assert initial['metrics']['probabilistic_metrics']['point_hour']['rows'] == 0
+            expect(page.locator('#reviewStatus')).to_contain_text('Chưa đủ nhãn')
+            expect(page.locator('#reviewDetail')).to_contain_text('0/1344')
         page.locator("#inspect").click()
         expect(page.locator("#decisionFeedback")).to_contain_text("Nhập tên")
         assert not page.request.get(url+"/api/state").json()["decisions"]

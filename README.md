@@ -57,11 +57,30 @@ Backend HTTP Python chuẩn; UI HTML/CSS/JavaScript. Không cần Streamlit, Nod
 
 | Phần | Artifact | Vai trò |
 |---|---|---|
-| **Bản chính 14/10** | `reports/steel/release_2026-10-16/forecast_bundle.joblib` | 4 HGB point + 6 HGB quantile; manifest kiểm hash/source/version |
+| **Bản chính 16/10** | `reports/steel/release_2026-10-16/forecast_bundle.joblib` | 4 HGB point + 6 HGB quantile; manifest kiểm hash/source/version |
 | Đối chứng tổng giờ 11/10 | `reports/steel/duy_2026-10-02/models/hgb_31_leaves.joblib` | Một dự báo tổng giờ, policy ở `release_2026-10-11/locked_policy.json` |
 | Nghiên cứu Khánh | `notebooks/artifacts/`, `khanh_gate7_2026-10-11/` | LightGBM lịch sử và ablation validation; không gắn policy này cho HGB |
 
 UI đặt bản mới ở phần chính, ghi nhãn đối chứng cho bản cũ. Buffer cũ không phải P90. Chạy riêng demo cũ bằng cách thêm `--legacy` vào lệnh server. Notebook không ghi đè model/policy.
+
+### Kịch bản demo 3 phút từ dữ liệu thật
+
+1. **0:00–0:40:** mở phiên `22/11/2018 08:15`. Giải thích bốn dự báo điểm, P50 tổng giờ riêng và dải sau calibration. Actual chưa đến hiển thị `—`.
+2. **0:40–1:20:** chỉ ra biên trên khoảng **413,41 kWh** vượt ngưỡng nghiên cứu **379,771 kWh**. Nhập tên tự khai/lý do và chọn **Đề nghị kiểm tra**; đây là ghi nhận, không gửi lệnh đến máy.
+3. **1:20–2:15:** tiến bốn bước 15 phút, giữ lựa chọn dự báo phát lúc 08:15. Actual đến lần lượt **101,48 / 120,67 / 124,49 / 139,61 kWh**; đến 09:15 mới đủ tổng **486,25 kWh**. Tổng bốn dự báo đã lưu vẫn **286,20 kWh**. Cảnh báo đúng nhưng actual ngoài dải.
+4. **2:15–3:00:** xem nhật ký và giám sát. Phiên ngắn chưa đủ 1.344 nhãn, không thể kết luận model ổn định. Ca bổ sung: **16/11 19:30** bỏ sót; **01/11 08:00** báo giả. Không gọi ca 22/11 08:15 là FN của bản mới.
+
+CSV → RAM → model → dashboard → ghi nhận/SQLite; log mặc định ở `reports/steel/modeling/demo_sessions/<session>/monitor.sqlite3`. Reset mở phiên mới, không mang nhãn đã biết sang. Có thể chọn nơi lưu khác bằng `--sessions-dir`. Không commit nhật ký người dùng.
+
+### Kiểm giám sát hai tuần trên máy riêng
+
+Không cần train lại. Lệnh dưới phát lại 1.440 bước từ dữ liệu thật, kiểm mốc 1.343/1.344 nhãn, tính lại reference từ calibration tháng 10, đối chiếu MAE/độ phủ hai tuần và kiểm nhãn đứt nhịp bằng cách giữ lại một bản ghi khỏi đầu vào kiểm thử.
+
+```powershell
+.venv\Scripts\python -X utf8 -m scripts.check_steel_monitoring --output-dir ..\steel-monitoring-check-01
+```
+
+Chọn thư mục output mới, ngoài các bản release. `monitoring.json` lưu kết luận; `profile.txt` và `timings.json` đo backend, không thay độ trễ trình duyệt. **Chưa đủ nhãn**, **nhãn đứt nhịp** và **chưa chạm ngưỡng rà soát** là ba trạng thái khác nhau. Hai cửa sổ 672 nhãn dùng mức tham chiếu CAL; PSI dùng phân bố TRAIN. Không trạng thái nào xác nhận thiết bị an toàn, tự retrain hoặc tự điều khiển.
 
 ## Dữ liệu và tiền xử lý
 

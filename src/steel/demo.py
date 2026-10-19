@@ -1,5 +1,6 @@
 """Sequential local replay controller. No future labels in browser payloads."""
 from datetime import datetime, timezone
+from copy import deepcopy
 from pathlib import Path
 import ctypes
 import json
@@ -67,6 +68,7 @@ class ReplayDemo:
         self.session = None
         self.timings = []
         self.metrics_cache = None
+        self._actual_display_cache = {}
 
     def close(self):
         if self.monitor:
@@ -98,6 +100,7 @@ class ReplayDemo:
             self.monitor = ForecastMonitor(self.model_dir, self.sessions_dir / self.session / "monitor.sqlite3", self.policy_path, self.probabilistic_dir)
             self.current, self.timings = t, []
             self.metrics_cache = None
+            self._actual_display_cache.clear()
             self._tick()
         elif action == "step":
             if self.monitor is None:
@@ -136,6 +139,32 @@ class ReplayDemo:
         payload['performance']['total_model_bytes'] = (payload['performance']['model_bytes'] or 0) + extra_bytes
         return payload
 
+    def _display_probabilistic(self, row, meter, measured):
+        """Reuse display actuals only while the saved forecast and its four readings match.
+
+        Cache entries contain no observations beyond the replay clock. Rewinding,
+        withholding a reading, or changing stored JSON invalidates the entry.
+        Return an independent object so UI/API consumers cannot mutate the cache.
+        """
+        raw = row['probabilistic_json']
+        cached = self._actual_display_cache.get(row['id'])
+        saved = cached[2] if cached and cached[0] == raw else json.loads(raw) if raw else None
+        if not saved or meter is None:
+            return json.loads(raw) if raw else None
+        clock = self.current.isoformat()
+        available = tuple(measured.get(step['time']) if step['time'] <= clock else None
+                          for step in saved['intervals'])
+        if cached and cached[0] == raw and cached[1] == available:
+            return deepcopy(cached[2])
+        from .probabilistic import attach_actuals_from_meter
+        try:
+            updated = attach_actuals_from_meter(saved, meter, self.current)
+        except (ValueError, TypeError):
+            # Never reuse cached actuals when validation fails.
+            return json.loads(raw) if raw else None
+        self._actual_display_cache[row['id']] = (raw, available, updated)
+        return deepcopy(updated)
+
     def state(self):
         base = {"session": self.session, "clock": self.current.isoformat() if self.current is not None else None,
                 "first_start": self.START.isoformat(), "last_start": self.LAST_ORIGIN.isoformat(),
@@ -168,22 +197,21 @@ class ReplayDemo:
         base["decisions"] = self.monitor.decisions(self.current)
         rows = self.monitor.db.execute("SELECT * FROM forecasts WHERE issue_time<=? ORDER BY issue_time DESC LIMIT 20", (self.current.isoformat(),)).fetchall()
         meter = None
+        measured = {}
         if self.monitor.probabilistic is not None:
-            from .probabilistic import observed_measurements, attach_actuals_from_meter
+            from .probabilistic import observed_measurements
             try:
                 meter = observed_measurements(observed, self.current)
+                measured = {t.isoformat(): float(value) for t, value in meter.items()}
             except (ValueError, TypeError):
                 pass  # Input lỗi: giữ actual chưa biết.
+        visible_ids = {r['id'] for r in rows}
+        self._actual_display_cache = {key: value for key, value in self._actual_display_cache.items()
+                                      if key in visible_ids}
         for r in rows:
             ready = r["evaluated_as_of"] is not None and r["evaluated_as_of"] <= self.current.isoformat()
             label_status = "available" if ready else "waiting_for_observations" if r["forecast_end"] <= self.current.isoformat() else "waiting"
-            probabilistic = json.loads(r['probabilistic_json']) if r['probabilistic_json'] else None
-            if probabilistic and meter is not None:
-                try:
-                    probabilistic = attach_actuals_from_meter(probabilistic, meter, self.current)
-                except (ValueError, TypeError):
-                    # Keep missing/error actuals unknown; never display invented zeros.
-                    pass
+            probabilistic = self._display_probabilistic(r, meter, measured)
             base["forecasts"].append({"issue_time": r["issue_time"], "forecast_end": r["forecast_end"],
                                       "prediction": r["predicted_kWh"], "actual": r["actual_kWh"] if ready else None,
                                       "error": r["predicted_kWh"]-r["actual_kWh"] if ready else None,
